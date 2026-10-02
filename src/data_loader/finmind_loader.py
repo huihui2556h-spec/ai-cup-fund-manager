@@ -4,7 +4,7 @@ from FinMind.data import DataLoader
 
 class FinMindDataLoader:
     def __init__(self, api_token: str = ""):
-        self.api_token = api_token
+        self.api_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiYWFyb24wNyIsImVtYWlsIjoiaHVpaHVpMjU1NmhAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MX0.BdgiGJOgolh7XdygpW4IUe_6i35KLenzNPTufGRpHVY
         self.dl = DataLoader()
         if api_token:
             self.dl.login_by_token(api_token)
