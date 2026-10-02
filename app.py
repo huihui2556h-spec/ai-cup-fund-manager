@@ -2,137 +2,272 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from datetime import datetime
 
 from src.data_loader.finmind_loader import FinMindDataLoader
 from src.models.dynamic_forecast import ai_dynamic_forecast
 from src.optimizer.portfolio_opt import PortfolioOptimizer
 
-# 1. 頁面設定
+# -------------------------------------------------------------------
+# 1. 頁面配置與競賽風控常數宣告
+# -------------------------------------------------------------------
 st.set_page_config(
-    page_title="AI Agent Fund Manager",
-    page_icon="📈",
+    page_title="AI Agent 基金經理人 - AI CUP 2026",
+    page_icon="💼",
     layout="wide"
 )
 
-st.title("🤖 AI CUP 2026 玉山人工智慧挑戰賽 - AI Agent 基金經理人儀表板")
+INITIAL_CAPITAL = 1_000_000_000.0  # 10 億元初始資金
+MIN_POSITIONS = 20                 # 最少持股檔數
+MAX_POSITIONS = 30                 # 最多持股檔數
+TSMC_WEIGHT_LIMIT = 0.25           # 2330.tw 上限 25%
+OTHER_WEIGHT_LIMIT = 0.10          # 其餘個股上限 10%
+MAX_CASH_RATIO = 0.25              # 現金部位每日必須 < 25%
+
+FEE_RATE = 0.001425                # 券商手續費 0.1425%
+TAX_RATE = 0.003                   # 證券交易稅 0.3%
+
+# 初始化 Session 狀態
+if "cash" not in st.session_state:
+    st.session_state["cash"] = INITIAL_CAPITAL
+if "portfolio" not in st.session_state:
+    # 格式: {stock_id: {"shares": 0, "avg_cost": 0.0}}
+    st.session_state["portfolio"] = {}
+if "trade_history" not in st.session_state:
+    st.session_state["trade_history"] = []
+
+st.title("💼 AI CUP 2026 - AI Agent 基金經理人 (競賽合規交易系統)")
+st.caption("符合玉山挑戰賽規則：20~30 檔持股、個股上限限制、現金部位 < 25%、整股交易與稅費扣除")
 st.markdown("---")
 
-# 2. 側邊欄參數輸入
-st.sidebar.header("⚙️ 系統參數設定")
-stock_input = st.sidebar.text_input("輸入分析股票代碼 (用逗號分開)", "2330, 2317, 2454")
+# -------------------------------------------------------------------
+# 2. 側邊欄控制台
+# -------------------------------------------------------------------
+st.sidebar.header("⚙️ 競賽交易控制台")
+
+# 預設提供至少 20 檔熱門台股以滿足持股下限
+default_stocks = (
+    "2330, 2317, 2454, 2308, 2382, 3231, 2356, 6669, 3017, 2379, "
+    "2881, 2882, 2891, 2886, 5880, 1301, 1302, 2002, 2603, 2609, "
+    "2615, 3008, 2408, 2303, 3711"
+)
+stock_input = st.sidebar.text_area("分析股票標的列表 (用逗號分開, 最少20檔)", default_stocks, height=120)
 target_stocks = [s.strip() for s in stock_input.split(",") if s.strip()]
 
-run_button = st.sidebar.button("🚀 執行 AI 分析與投資組合最佳化", type="primary")
+col_btn1, col_btn2 = st.sidebar.columns(2)
+run_ai_btn = col_btn1.button("🚀 執行 AI 決策下單", type="primary")
+reset_btn = col_btn2.button("🔄 重置十億帳戶")
 
-# 3. 初始化 Data Loader
+if reset_btn:
+    st.session_state["cash"] = INITIAL_CAPITAL
+    st.session_state["portfolio"] = {}
+    st.session_state["trade_history"] = []
+    st.sidebar.success("帳戶已重置為 10 億元初始資金！")
+
 @st.cache_resource
 def get_loader():
     return FinMindDataLoader()
 
 loader = get_loader()
 
-# 4. 執行 AI 分析預測
-if run_button or "forecast_results" not in st.session_state:
-    with st.spinner("正在讀取 FinMind 即時籌碼與股價數據，進行 AI 預測中..."):
-        forecast_results = []
-        for stock_id in target_stocks:
-            res = ai_dynamic_forecast(stock_id, loader=loader)
-            forecast_results.append(res)
-        st.session_state["forecast_results"] = forecast_results
+# -------------------------------------------------------------------
+# 3. 取得最新每日收盤價與 AI 預測分數
+# -------------------------------------------------------------------
+forecast_results = []
+latest_prices = {}
 
-forecast_results = st.session_state.get("forecast_results", [])
-
-# 5. 顯示 AI 預測摘要卡片
-st.subheader("📊 AI 預測與籌碼訊號分析")
-if forecast_results:
-    cols = st.columns(len(forecast_results))
-    benchmark_weights = {}
-    equal_weight = round(1.0 / len(target_stocks), 2) if target_stocks else 0
-
-    for idx, res in enumerate(forecast_results):
-        stock_id = res["stock_id"]
-        score = res["forecast_score"]
-        signal = res["signal"]
-        details = res.get("analysis_details", {})
-        
-        benchmark_weights[stock_id] = equal_weight
-
-        with cols[idx]:
-            st.metric(
-                label=f"股票代號: {stock_id}",
-                value=f"{score:.4f}",
-                delta=f"訊號: {signal}"
-            )
-            st.write(f"• 動量分數: `{details.get('momentum_score', 0)}`")
-            st.write(f"• 籌碼 Z-Score: `{details.get('chip_z_score', 0)}`")
-            st.write(f"• 年化波動度: `{details.get('annual_volatility', 0)}`")
-
-st.markdown("---")
-
-# 6. 投資組合權重分配
-st.subheader("⚖️ 投資組合最佳化配置 (Portfolio Allocation)")
-col_left, col_right = st.columns([1, 1])
-
-if forecast_results:
-    # 抓取各股歷史收盤價建立 Returns DataFrame 供 Optimizer 使用
-    returns_dict = {}
-    for stock_id in target_stocks:
-        df_p = loader.get_stock_price(stock_id)
-        if not df_p.empty and "close" in df_p.columns:
-            returns_dict[stock_id] = df_p["close"].pct_change()
-    
-    returns_df = pd.DataFrame(returns_dict).dropna()
-    
-    # 若成功取得歷史報酬率資料則建立 PortfolioOptimizer，否則採等權重分配
-    if not returns_df.empty:
-        try:
-            optimizer = PortfolioOptimizer(returns_df)
-            weights_dict = optimizer.optimize_max_sharpe()
-        except Exception:
-            weights_dict = {s: round(1.0 / len(target_stocks), 4) for s in target_stocks}
+for stock_id in target_stocks:
+    res = ai_dynamic_forecast(stock_id, loader=loader)
+    forecast_results.append(res)
+    df_p = loader.get_stock_price(stock_id)
+    if not df_p.empty and "close" in df_p.columns:
+        latest_prices[stock_id] = df_p["close"].iloc[-1]
     else:
-        weights_dict = {s: round(1.0 / len(target_stocks), 4) for s in target_stocks}
+        latest_prices[stock_id] = 100.0  # 預設價格備用
 
-    df_weights = pd.DataFrame([
-        {"股票代碼": k, "建議配置權重 (%)": round(v * 100, 2)}
-        for k, v in weights_dict.items()
-    ])
-
-    with col_left:
-        st.write("##### 權重分配表")
-        st.dataframe(df_weights, use_container_width=True)
-
-    with col_right:
-        fig_pie = px.pie(
-            df_weights,
-            names="股票代碼",
-            values="建議配置權重 (%)",
-            title="最佳化權重比例圖",
-            hole=0.4
+# -------------------------------------------------------------------
+# 4. 嚴格符合競賽規則的 AI 自動下單邏輯
+# -------------------------------------------------------------------
+if run_ai_btn:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 1. 篩選評分高於門檻的前 20~30 檔股票
+    sorted_stocks = sorted(forecast_results, key=lambda x: x["forecast_score"], reverse=True)
+    selected_stocks = sorted_stocks[:MAX_POSITIONS]
+    
+    if len(selected_stocks) < MIN_POSITIONS:
+        st.error(f"⚠️️ 分析標的不足！競賽要求持股需在 {MIN_POSITIONS}~{MAX_POSITIONS} 檔，請至少輸入 20 檔股票。")
+    else:
+        # 2. 計算總淨值 (Total Net Asset Value)
+        current_stock_val = sum(
+            st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 0)
+            for s in selected_stocks
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        total_nav = st.session_state["cash"] + current_stock_val
+
+        # 3. 確定目標股票權重分配 (考慮台積電 25% / 其餘 10% / 現金 < 25%)
+        # 現金部位留 10% (滿足現金 < 25% 規則)，其餘 90% 股票平分或依權重
+        target_stock_allocation_ratio = 0.90  
+        num_selected = len(selected_stocks)
+        
+        # 進行下單計算
+        for res in selected_stocks:
+            s_id = res["stock_id"]
+            price = latest_prices.get(s_id, 100.0)
+            score = res["forecast_score"]
+            signal = res["signal"]
+
+            # 設定單檔持股淨值上限 constraint
+            max_weight = TSMC_WEIGHT_LIMIT if s_id == "2330" else OTHER_WEIGHT_LIMIT
+            max_allowed_val = total_nav * max_weight
+
+            current_holdings = st.session_state["portfolio"].get(s_id, {"shares": 0, "avg_cost": 0.0})
+            shares_held = current_holdings["shares"]
+
+            if signal in ["BUY", "HOLD"] and score >= 0.40:
+                # 算目標建倉價值 (整股交易，1000 股為 1 張)
+                target_val = min(max_allowed_val, (total_nav * target_stock_allocation_ratio) / num_selected)
+                
+                if target_val > (shares_held * price):
+                    buy_val_needed = target_val - (shares_held * price)
+                    # 只能買整張 (1,000 股)
+                    buy_lots = int(buy_val_needed // (price * 1000))
+                    buy_shares = buy_lots * 1000
+
+                    if buy_shares > 0:
+                        gross_cost = buy_shares * price
+                        fee = gross_cost * FEE_RATE
+                        total_cost = gross_cost + fee
+
+                        if st.session_state["cash"] >= total_cost:
+                            st.session_state["cash"] -= total_cost
+                            new_shares = shares_held + buy_shares
+                            new_avg_cost = ((shares_held * current_holdings["avg_cost"]) + total_cost) / new_shares
+                            
+                            st.session_state["portfolio"][s_id] = {"shares": new_shares, "avg_cost": new_avg_cost}
+                            
+                            st.session_state["trade_history"].append({
+                                "時間": now_str, "股票代碼": s_id, "動作": "買進 (BUY)",
+                                "成交單價": price, "交易數量(張)": buy_lots, "整股(股)": buy_shares,
+                                "成交金額": gross_cost, "手續費": fee, "證交稅": 0.0,
+                                "扣款總額": total_cost, "AI 評分": score
+                            })
+
+            elif signal == "SELL" and shares_held > 0:
+                sell_lots = int(shares_held // 1000)
+                sell_shares = sell_lots * 1000
+                
+                if sell_shares > 0:
+                    gross_revenue = sell_shares * price
+                    fee = gross_revenue * FEE_RATE
+                    tax = gross_revenue * TAX_RATE
+                    net_revenue = gross_revenue - fee - tax
+
+                    st.session_state["cash"] += net_revenue
+                    st.session_state["portfolio"][s_id] = {"shares": 0, "avg_cost": 0.0}
+
+                    st.session_state["trade_history"].append({
+                        "時間": now_str, "股票代碼": s_id, "動作": "賣出 (SELL)",
+                        "成交單價": price, "交易數量(張)": sell_lots, "整股(股)": sell_shares,
+                        "成交金額": gross_revenue, "手續費": fee, "證交稅": tax,
+                        "淨入帳金額": net_revenue, "AI 評分": score
+                    })
+
+        st.success("🤖 AI 交易決策執行完成！已根據每日收盤價、整股買賣與扣除稅費完成配置。")
+
+# -------------------------------------------------------------------
+# 5. 資產總覽與規則檢核面板
+# -------------------------------------------------------------------
+stock_market_value = 0.0
+inventory_data = []
+
+for s_id, hold in st.session_state["portfolio"].items():
+    s_shares = hold["shares"]
+    if s_shares > 0:
+        cur_p = latest_prices.get(s_id, 0.0)
+        mkt_val = s_shares * cur_p
+        stock_market_value += mkt_val
+        pnl = (cur_p - hold["avg_cost"]) * s_shares
+        pnl_pct = ((cur_p - hold["avg_cost"]) / hold["avg_cost"]) * 100 if hold["avg_cost"] > 0 else 0
+        
+        inventory_data.append({
+            "股票代碼": s_id, "持股張數": int(s_shares // 1000), "持股總股數": s_shares,
+            "平均成本": f"${hold['avg_cost']:.2f}", "當前收盤價": f"${cur_p:.2f}",
+            "持股市值": f"${mkt_val:,.0f}", "未實現損益": f"${pnl:+,.0f} ({pnl_pct:+.2f}%)"
+        })
+
+total_assets = st.session_state["cash"] + stock_market_value
+cash_ratio = (st.session_state["cash"] / total_assets) * 100 if total_assets > 0 else 0
+tsmc_shares = st.session_state["portfolio"].get("2330", {}).get("shares", 0)
+tsmc_val = tsmc_shares * latest_prices.get("2330", 0.0)
+tsmc_ratio = (tsmc_val / total_assets) * 100 if total_assets > 0 else 0
+active_positions_count = len(inventory_data)
+
+st.subheader("💰 基金資產總覽 (10 億元資本等級)")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("總資產淨值 (NAV)", f"${total_assets:,.0f}", f"{((total_assets - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100:+.2f}%")
+m2.metric("可用現金金額", f"${st.session_state['cash']:,.0f}", f"現金佔比: {cash_ratio:.1f}%")
+m3.metric("股票持股總市值", f"${stock_market_value:,.0f}")
+m4.metric("目前持股總檔數", f"{active_positions_count} 檔", "競賽限制: 20~30檔")
 
 st.markdown("---")
 
-# 7. 個股歷史數據走勢圖
-st.subheader("📈 個股歷史數據與籌碼趨勢驗證")
-selected_stock = st.selectbox("選擇要檢視詳細籌碼與股價圖表的股票:", target_stocks if target_stocks else ["2330"])
+# 競賽規則檢核卡片
+st.subheader("🛡️ 競賽風控合規性檢核 (Compliance Control)")
+c1, c2, c3 = st.columns(3)
 
-if selected_stock:
-    df_price = loader.get_stock_price(selected_stock)
-    df_chips = loader.get_institutional_chips(selected_stock)
+with c1:
+    if MIN_POSITIONS <= active_positions_count <= MAX_POSITIONS:
+        st.success(f"✅ 持股檔數合規: {active_positions_count} 檔 (符合 20~30 檔限制)")
+    else:
+        st.warning(f"⚠️ 持股檔數未達標: {active_positions_count} 檔 (需保持 20~30 檔)")
 
-    tab1, tab2 = st.tabs(["📉 股價走勢圖", "🏦 三大法人買賣超數據"])
+with c2:
+    if cash_ratio < 25.0:
+        st.success(f"✅ 現金部位合規: {cash_ratio:.2f}% (符合 < 25% 限制)")
+    else:
+        st.error(f"❌ 現金部位超標: {cash_ratio:.2f}% (必須 < 25%)")
 
-    with tab1:
-        if not df_price.empty and "close" in df_price.columns:
-            fig_line = px.line(df_price, x="date", y="close", title=f"{selected_stock} 歷史收盤價走勢")
-            st.plotly_chart(fig_line, use_container_width=True)
-        else:
-            st.info("尚無股價歷史數據。")
+with c3:
+    if tsmc_ratio <= 25.0:
+        st.success(f"✅ 台積電持股合規: {tsmc_ratio:.2f}% (符合 <= 25% 限制)")
+    else:
+        st.error(f"❌ 台積電持股超標: {tsmc_ratio:.2f}% (必須 <= 25%)")
 
-    with tab2:
-        if not df_chips.empty:
-            st.dataframe(df_chips, use_container_width=True)
-        else:
-            st.info("尚無籌碼數據。")
+st.markdown("---")
+
+# -------------------------------------------------------------------
+# 6. 頁籤明細展示 (AI 預測、庫存、交易歷史)
+# -------------------------------------------------------------------
+tab_ai, tab_inventory, tab_history = st.tabs(["🤖 AI 籌碼預測與評分", "📦 當前持股部位", "📜 評審審查-交易歷史日誌"])
+
+with tab_ai:
+    st.write("##### AI 籌碼與動量評分明細")
+    ai_rows = []
+    for res in forecast_results:
+        s_id = res["stock_id"]
+        details = res.get("analysis_details", {})
+        ai_rows.append({
+            "股票代碼": s_id,
+            "AI 綜合評分": res["forecast_score"],
+            "訊號建議": res["signal"],
+            "籌碼 Z-Score": details.get("chip_z_score", 0),
+            "動量分數": details.get("momentum_score", 0),
+            "年化波動度": details.get("annual_volatility", 0),
+            "最新收盤價": latest_prices.get(s_id, 0.0)
+        })
+    st.dataframe(pd.DataFrame(ai_rows), use_container_width=True)
+
+with tab_inventory:
+    st.write("##### 目前持股庫存 (限制: 台積電 <= 25%, 其餘 <= 10%)")
+    if inventory_data:
+        st.dataframe(pd.DataFrame(inventory_data), use_container_width=True)
+    else:
+        st.info("尚無持股部位。請點擊左側「🚀 執行 AI 決策下單」自動建倉。")
+
+with tab_history:
+    st.write("##### 評審檢視：完整交易歷史與扣除稅費日誌")
+    if st.session_state["trade_history"]:
+        st.dataframe(pd.DataFrame(st.session_state["trade_history"]), use_container_width=True)
+    else:
+        st.info("尚無交易紀錄。")
