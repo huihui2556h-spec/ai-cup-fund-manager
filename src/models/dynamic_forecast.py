@@ -1,62 +1,81 @@
-import pandas as pd
 import numpy as np
 
-def ai_dynamic_forecast(stock_id: str, loader) -> dict:
-    """綜合 奇摩技術面 + FinMind 籌碼面 之 AI 多因子推理模型"""
-    
-    # 1. 奇摩價格源 (Yahoo Finance)
-    df_p = loader.get_stock_price_yahoo(stock_id)
-    
-    close_price = 100.0
-    tech_score = 0.50
-    chip_score = 0.50
-    
-    if df_p is not None and not df_p.empty and "close" in df_p.columns:
-        close_price = float(df_p["close"].iloc[-1])
+class MultiAuthorityForecastModel:
+    def __init__(self):
+        # 設定各 Authority 維度權重
+        self.weights = {
+            "twse_tpex": 0.25,  # 價量面
+            "mops": 0.25,       # 基本面
+            "fininst": 0.25,    # 籌碼面
+            "vendor": 0.15,     # 進階技術指標
+            "media": 0.10       # 消息面
+        }
+
+    def predict_stock_score(self, stock_id: str, authority_data: dict) -> dict:
+        """
+        authority_data 格式說明:
+        {
+            "twse_tpex": {"close": 150, "ma5": 148, "ma20": 142, "volume_ratio": 1.3},
+            "mops": {"revenue_yoy": 15.2},
+            "fininst": {"institutional_net_buy": 2500},
+            "vendor": {"rsi": 62, "macd_hist": 1.5},
+            "media": {"sentiment_score": 0.70},
+            "taifex": {"pc_ratio": 108.0}
+        }
+        """
+        sub_scores = {}
+
+        # 1. twse / tpex (個股價量 25%)
+        twse_info = authority_data.get("twse_tpex", {})
+        close = twse_info.get("close", 0)
+        ma5 = twse_info.get("ma5", 0)
+        ma20 = twse_info.get("ma20", 0)
+        vol_ratio = twse_info.get("volume_ratio", 1.0)
         
-        # 技術面因子計算 (5日線與20日線趨勢)
-        if len(df_p) >= 5:
-            ma5 = df_p["close"].tail(5).mean()
-            ma20 = df_p["close"].mean() if len(df_p) >= 20 else ma5
-            
-            # 技術動能得分
-            bias = (close_price - ma5) / ma5 if ma5 > 0 else 0
-            trend = (ma5 - ma20) / ma20 if ma20 > 0 else 0
-            tech_score = float(np.clip(0.50 + (bias * 3) + (trend * 2), 0.10, 0.90))
+        twse_score = 0.5
+        if close > ma5 > ma20: twse_score += 0.3
+        if vol_ratio > 1.2: twse_score += 0.2
+        sub_scores["twse_tpex"] = min(1.0, twse_score)
 
-    # 2. FinMind 籌碼源 (三大法人籌碼)
-    chip_net = loader.get_institutional_chips(stock_id)
-    if chip_net > 5000:       # 法人強勢大買
-        chip_score = 0.85
-    elif chip_net > 0:        # 法人小買
-        chip_score = 0.65
-    elif chip_net < -5000:    # 法人強勢大賣
-        chip_score = 0.15
-    else:                     # 法人觀望
-        chip_score = 0.45
+        # 2. mops (基本面營收 25%)
+        yoy = authority_data.get("mops", {}).get("revenue_yoy", 0)
+        if yoy > 20: mops_score = 1.0
+        elif yoy > 0: mops_score = 0.75
+        elif yoy > -10: mops_score = 0.4
+        else: mops_score = 0.1
+        sub_scores["mops"] = mops_score
 
-    # 3. AI 綜合加權評分 (技術面 50% + 籌碼面 50%)
-    final_score = float(np.clip(0.50 * tech_score + 0.50 * chip_score, 0.05, 0.95))
-    
-    # 判定訊號
-    if final_score >= 0.65:
-        signal = "BUY"
-    elif final_score <= 0.35:
-        signal = "SELL"
-    else:
-        signal = "HOLD"
+        # 3. fininst (法人籌碼 25%)
+        net_buy = authority_data.get("fininst", {}).get("institutional_net_buy", 0)
+        if net_buy > 3000: fin_score = 1.0
+        elif net_buy > 0: fin_score = 0.7
+        elif net_buy > -2000: fin_score = 0.35
+        else: fin_score = 0.1
+        sub_scores["fininst"] = fin_score
 
-    # 4. 生成「有理有據」推理邏輯鏈 (Schema 4.2 專用)
-    chip_desc = "三大法人近期顯著買超加碼" if chip_score > 0.6 else ("三大法人籌碼調節流出" if chip_score < 0.4 else "三大法人動向中性")
-    tech_desc = "價格突破短均線展現強勢動能" if tech_score > 0.6 else "技術面陷入震盪盤整"
-    
-    logic_str = f"標的 {stock_id} 當前價 ${close_price:.2f}。AI 評分 {final_score:.2f}（技術面評分: {tech_score:.2f}，籌碼面評分: {chip_score:.2f}）。分析顯示：{tech_desc}，且{chip_desc}，綜合決策執行 {signal} 策略。"
+        # 4. vendor (進階技術面 15%)
+        rsi = authority_data.get("vendor", {}).get("rsi", 50)
+        macd = authority_data.get("vendor", {}).get("macd_hist", 0)
+        vendor_score = 0.5
+        if 50 <= rsi <= 75: vendor_score += 0.25
+        if macd > 0: vendor_score += 0.25
+        sub_scores["vendor"] = vendor_score
 
-    return {
-        "stock_id": stock_id,
-        "forecast_score": round(final_score, 4),
-        "signal": signal,
-        "close_price": close_price,
-        "chip_net": chip_net,
-        "logic": logic_str
-    }
+        # 5. media (消息面情緒 10%)
+        sub_scores["media"] = authority_data.get("media", {}).get("sentiment_score", 0.5)
+
+        # 計算基礎加權得分
+        base_score = sum(sub_scores[k] * self.weights[k] for k in self.weights)
+
+        # 6. taifex (期交所大盤調控乘數)
+        pc_ratio = authority_data.get("taifex", {}).get("pc_ratio", 100.0)
+        taifex_mult = 1.10 if pc_ratio >= 110 else (0.85 if pc_ratio < 90 else 1.0)
+
+        final_score = round(min(1.0, base_score * taifex_mult), 3)
+
+        return {
+            "stock_id": stock_id,
+            "forecast_score": final_score,
+            "sub_scores": sub_scores,
+            "market_multiplier": taifex_mult
+        }
