@@ -3,11 +3,14 @@ from datetime import datetime, timedelta
 from FinMind.data import DataLoader
 
 class FinMindDataLoader:
-    def __init__(self, api_token: str = ""):
-        self.api_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiYWFyb24wNyIsImVtYWlsIjoiaHVpaHVpMjU1NmhAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MX0.BdgiGJOgolh7XdygpW4IUe_6i35KLenzNPTufGRpHVY
+    def __init__(self, api_token: str = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoiYWFyb24wNyIsImVtYWlsIjoiaHVpaHVpMjU1NmhAZ21haWwuY29tIiwidG9rZW5fdmVyc2lvbiI6MX0.BdgiGJOgolh7XdygpW4IUe_6i35KLenzNPTufGRpHVY"):
         self.dl = DataLoader()
         if api_token:
-            self.dl.login_by_token(api_token)
+            try:
+                self.dl.login_by_token(api_token)
+                print("FinMind Token 驗證登入成功！")
+            except Exception as e:
+                print(f"FinMind Token 登入失敗: {e}")
 
     def get_stock_price(self, stock_id: str, start_date: str = None) -> pd.DataFrame:
         """抓取個股近期的日 K 線歷史資料"""
