@@ -1,9 +1,17 @@
-import json
+mport json
+import sys
+import os
+from datetime import datetime, timezone, timedelta
+
+# 1. 確保專案根目錄加入路徑
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# 2. 標準第三方套件
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timezone, timedelta
 
+# 3. 專案內部模組匯入（乾淨不重複）
 from src.data_loader.finmind_loader import FinMindDataLoader
 from src.models.dynamic_forecast import ai_dynamic_forecast
 from src.models.dplan_generator import generate_dplan_json
