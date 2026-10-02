@@ -291,7 +291,7 @@ with c3:
 st.markdown("---")
 
 # -------------------------------------------------------------------
-# 6. 頁籤明細展示
+# 6. 頁籤明細展示與 CSV 下載
 # -------------------------------------------------------------------
 tab_ai, tab_inventory, tab_history = st.tabs(["🤖 AI 籌碼預測與評分", "📦 當前持股部位", "📜 評審審查-交易歷史日誌"])
 
@@ -303,7 +303,20 @@ with tab_ai:
 
 with tab_inventory:
     if inventory_data:
-        st.dataframe(pd.DataFrame(inventory_data), use_container_width=True)
+        # 顯示 DataFrame
+        df_inventory = pd.DataFrame(inventory_data)
+        st.dataframe(df_inventory, use_container_width=True)
+        
+        # 轉換為 CSV 格式 (加上 utf-8-sig 防止 Excel 中文亂碼)
+        csv_data = df_inventory.to_csv(index=False).encode('utf-8-sig')
+        
+        # 建立下載按鈕
+        st.download_button(
+            label="📥 下載持股部位 (CSV)",
+            data=csv_data,
+            file_name=f"portfolio_holdings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
     else:
         st.info("尚無持股部位。")
 
