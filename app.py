@@ -7,6 +7,7 @@ from datetime import datetime
 from src.data_loader.finmind_loader import FinMindDataLoader
 from src.models.dynamic_forecast import ai_dynamic_forecast
 from src.optimizer.portfolio_opt import PortfolioOptimizer
+from src.models.dplan_generator import generate_dplan_json
 
 # -------------------------------------------------------------------
 # 1. 頁面配置與競賽風控常數宣告
@@ -239,35 +240,53 @@ st.markdown("---")
 # -------------------------------------------------------------------
 # 6. 頁籤明細展示 (AI 預測、庫存、交易歷史)
 # -------------------------------------------------------------------
-tab_ai, tab_inventory, tab_history = st.tabs(["🤖 AI 籌碼預測與評分", "📦 當前持股部位", "📜 評審審查-交易歷史日誌"])
+tab_report, tab_inventory, tab_history = st.tabs(["📄 每日 Agent 決策報告與交易書導出", "📦 當前庫存與均價", "📜 歷史交易紀錄"])
 
-with tab_ai:
-    st.write("##### AI 籌碼與動量評分明細")
-    ai_rows = []
-    for res in forecast_results:
-        s_id = res["stock_id"]
-        details = res.get("analysis_details", {})
-        ai_rows.append({
-            "股票代碼": s_id,
-            "AI 綜合評分": res["forecast_score"],
-            "訊號建議": res["signal"],
-            "籌碼 Z-Score": details.get("chip_z_score", 0),
-            "動量分數": details.get("momentum_score", 0),
-            "年化波動度": details.get("annual_volatility", 0),
-            "最新收盤價": latest_prices.get(s_id, 0.0)
-        })
-    st.dataframe(pd.DataFrame(ai_rows), use_container_width=True)
+with tab_report:
+    st.write("##### 📄 競賽繳交專用：D-Plan JSON (Schema v4.2 規格)")
+    
+    # 填寫隊伍資訊與交易日期
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        team_id_input = st.text_input("競賽隊伍 ID (team_id)", value="TEAM_042")
+    with col_t2:
+        trade_date_input = st.date_input("交易日期 (trade_date)").strftime("%Y-%m-%d")
+    
+    st.markdown("---")
+    
+    # 觸發生成 D-Plan JSON
+    if st.button("🔨 產出合規 D-Plan JSON 檔案", type="primary"):
+        # 整理當前持股資訊供算價與覆蓋率檢核
+        portfolio_for_dplan = {}
+        for s_id, hold in st.session_state["portfolio"].items():
+            if hold["shares"] > 0:
+                portfolio_for_dplan[s_id] = {
+                    "shares": hold["shares"],
+                    "close_price": vwap_prices.get(s_id, 100.0)
+                }
 
-with tab_inventory:
-    st.write("##### 目前持股庫存 (限制: 台積電 <= 25%, 其餘 <= 10%)")
-    if inventory_data:
-        st.dataframe(pd.DataFrame(inventory_data), use_container_width=True)
-    else:
-        st.info("尚無持股部位。請點擊左側「🚀 執行 AI 決策下單」自動建倉。")
-
-with tab_history:
-    st.write("##### 評審檢視：完整交易歷史與扣除稅費日誌")
-    if st.session_state["trade_history"]:
-        st.dataframe(pd.DataFrame(st.session_state["trade_history"]), use_container_width=True)
-    else:
-        st.info("尚無交易紀錄。")
+        # 呼叫剛才建立的 generate_dplan_json 函數
+        dplan_obj = generate_dplan_json(
+            team_id=team_id_input,
+            trade_date=trade_date_input,
+            nav=total_assets,
+            current_portfolio=portfolio_for_dplan,
+            market_signals={},
+            forecast_results=forecast_results
+        )
+        
+        json_str = json.dumps(dplan_obj, indent=2, ensure_ascii=False)
+        filename = f"D-Plan_{team_id_input}_{trade_date_input}.json"
+        
+        st.success(f"✅ 已成功生成符合 Schema v4.2 規範之檔案：`{filename}`")
+        
+        # 提供即時下載與 JSON 結構預覽
+        st.download_button(
+            label=f"📥 點此下載 JSON 繳交檔 ({filename})",
+            data=json_str,
+            file_name=filename,
+            mime="application/json"
+        )
+        
+        st.write("##### 🔍 D-Plan JSON 內容即時預覽：")
+        st.json(dplan_obj)
