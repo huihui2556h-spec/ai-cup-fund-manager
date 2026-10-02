@@ -94,11 +94,10 @@ if reset_btn:
     st.sidebar.success("帳戶已重置為 10 億元初始資金！")
 
 # -------------------------------------------------------------------
-# 3. AI 全自動動態選股與「有理有據」推理引擎 (限制於官方 150 檔)
+# 3. AI 全自動動態選股與「有理有據」推理引擎 (更新：動態日期與價格備援)
 # -------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def fetch_official_universe(top_n=50):
-    """嚴格鎖定玉山競賽 150 檔清單進行掃描"""
     return OFFICIAL_150_UNIVERSE[:top_n]
 
 target_stocks = fetch_official_universe(universe_size)
@@ -106,16 +105,15 @@ target_stocks = fetch_official_universe(universe_size)
 forecast_results = []
 latest_prices = {}
 
+# 取得最近一個交易日的日期 (避免假假日抓不到資料)
+today_str = datetime.now().strftime("%Y-%m-%d")
+start_date_str = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+
 for stock_id in target_stocks:
-    # 呼叫動態 AI 預測模型
     res = ai_dynamic_forecast(stock_id, loader=loader)
-    
-    # 自動附帶交易所權責單位 (上市: twse, 上櫃: tpex)
     res["authority"] = "tpex" if stock_id in OTC_STOCKS_50 else "twse"
     
-    # 構建「有理有據」推理邏輯 (Inference Logic)
     score = res.get("forecast_score", 0.5)
-    
     if score >= 0.70:
         logic_str = f"標的 {stock_id} 綜合技術量能與籌碼動向顯示強烈多頭，評分 {score:.2f}，符合攻勢建倉邏輯。"
     elif score >= 0.40:
@@ -126,11 +124,16 @@ for stock_id in target_stocks:
     res["logic"] = logic_str
     forecast_results.append(res)
     
-    df_p = loader.get_stock_price(stock_id)
-    if not df_p.empty and "close" in df_p.columns:
-        latest_prices[stock_id] = float(df_p["close"].iloc[-1])
-    else:
-        latest_prices[stock_id] = 100.0
+    # 強制傳入 start_date 確保 FinMind 回傳最新股價歷史
+    try:
+        df_p = loader.get_stock_price(stock_id, start_date=start_date_str)
+        if df_p is not None and not df_p.empty and "close" in df_p.columns:
+            latest_prices[stock_id] = float(df_p["close"].iloc[-1])
+        else:
+            # 若 API 抓不到，嘗試從 ai_dynamic_forecast 結果中回傳的價格獲取
+            latest_prices[stock_id] = float(res.get("close_price", 100.0))
+    except Exception as e:
+        latest_prices[stock_id] = float(res.get("close_price", 100.0))
 
 # -------------------------------------------------------------------
 # 4. 嚴格合規之 AI 自動下單邏輯
