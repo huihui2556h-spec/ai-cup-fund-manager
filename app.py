@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 
 from src.data_loader.finmind_loader import FinMindDataLoader
 from src.models.dynamic_forecast import ai_dynamic_forecast
 from src.optimizer.portfolio_opt import PortfolioOptimizer
 
-# 1. 頁面配置
+# 1. 頁面設定
 st.set_page_config(
     page_title="AI Agent Fund Manager",
     page_icon="📈",
@@ -16,23 +17,21 @@ st.set_page_config(
 st.title("🤖 AI CUP 2026 玉山人工智慧挑戰賽 - AI Agent 基金經理人儀表板")
 st.markdown("---")
 
-# 2. 側邊欄設定
+# 2. 側邊欄參數輸入
 st.sidebar.header("⚙️ 系統參數設定")
 stock_input = st.sidebar.text_input("輸入分析股票代碼 (用逗號分開)", "2330, 2317, 2454")
 target_stocks = [s.strip() for s in stock_input.split(",") if s.strip()]
 
 run_button = st.sidebar.button("🚀 執行 AI 分析與投資組合最佳化", type="primary")
 
-# 3. 初始化模組
+# 3. 初始化 Data Loader
 @st.cache_resource
-def get_components():
-    loader = FinMindDataLoader()
-    optimizer = PortfolioOptimizer()
-    return loader, optimizer
+def get_loader():
+    return FinMindDataLoader()
 
-loader, optimizer = get_components()
+loader = get_loader()
 
-# 4. 執行預測邏輯
+# 4. 執行 AI 分析預測
 if run_button or "forecast_results" not in st.session_state:
     with st.spinner("正在讀取 FinMind 即時籌碼與股價數據，進行 AI 預測中..."):
         forecast_results = []
@@ -75,11 +74,28 @@ st.subheader("⚖️ 投資組合最佳化配置 (Portfolio Allocation)")
 col_left, col_right = st.columns([1, 1])
 
 if forecast_results:
-    final_portfolio = optimizer.optimize_weights(forecast_results, benchmark_weights)
+    # 抓取各股歷史收盤價建立 Returns DataFrame 供 Optimizer 使用
+    returns_dict = {}
+    for stock_id in target_stocks:
+        df_p = loader.get_stock_price(stock_id)
+        if not df_p.empty and "close" in df_p.columns:
+            returns_dict[stock_id] = df_p["close"].pct_change()
     
+    returns_df = pd.DataFrame(returns_dict).dropna()
+    
+    # 若成功取得歷史報酬率資料則建立 PortfolioOptimizer，否則採等權重分配
+    if not returns_df.empty:
+        try:
+            optimizer = PortfolioOptimizer(returns_df)
+            weights_dict = optimizer.optimize_max_sharpe()
+        except Exception:
+            weights_dict = {s: round(1.0 / len(target_stocks), 4) for s in target_stocks}
+    else:
+        weights_dict = {s: round(1.0 / len(target_stocks), 4) for s in target_stocks}
+
     df_weights = pd.DataFrame([
         {"股票代碼": k, "建議配置權重 (%)": round(v * 100, 2)}
-        for k, v in final_portfolio.items()
+        for k, v in weights_dict.items()
     ])
 
     with col_left:
@@ -98,7 +114,7 @@ if forecast_results:
 
 st.markdown("---")
 
-# 7. 個股數據明細
+# 7. 個股歷史數據走勢圖
 st.subheader("📈 個股歷史數據與籌碼趨勢驗證")
 selected_stock = st.selectbox("選擇要檢視詳細籌碼與股價圖表的股票:", target_stocks if target_stocks else ["2330"])
 
