@@ -4,3 +4,7 @@ numpy
 plotly
 scipy
 FinMind
+tqdm
+requests
+aiohttp
+jsonschema
