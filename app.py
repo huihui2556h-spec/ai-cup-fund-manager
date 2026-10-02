@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,14 +20,14 @@ st.set_page_config(
 )
 
 INITIAL_CAPITAL = 1_000_000_000.0  # 10 億元初始資金
-MIN_POSITIONS = 20                 # 最少持股檔數
-MAX_POSITIONS = 30                 # 最多持股檔數
-TSMC_WEIGHT_LIMIT = 0.25           # 2330.tw 上限 25%
-OTHER_WEIGHT_LIMIT = 0.10          # 其餘個股上限 10%
-MAX_CASH_RATIO = 0.25              # 現金部位每日必須 < 25%
+MIN_POSITIONS = 20                  # 最少持股檔數
+MAX_POSITIONS = 30                  # 最多持股檔數
+TSMC_WEIGHT_LIMIT = 0.25            # 2330.tw 上限 25%
+OTHER_WEIGHT_LIMIT = 0.10           # 其餘個股上限 10%
+MAX_CASH_RATIO = 0.25               # 現金部位每日必須 < 25%
 
-FEE_RATE = 0.001425                # 券商手續費 0.1425%
-TAX_RATE = 0.003                   # 證券交易稅 0.3%
+FEE_RATE = 0.001425                 # 券商手續費 0.1425%
+TAX_RATE = 0.003                    # 證券交易稅 0.3%
 
 # 初始化 Session 狀態
 if "cash" not in st.session_state:
@@ -46,7 +47,7 @@ st.markdown("---")
 # -------------------------------------------------------------------
 st.sidebar.header("⚙️ 競賽交易控制台")
 
-# 預設提供至少 20 檔熱門台股以滿足持股下限
+# 預設提供至少 25 檔熱門台股以滿足持股下限
 default_stocks = (
     "2330, 2317, 2454, 2308, 2382, 3231, 2356, 6669, 3017, 2379, "
     "2881, 2882, 2891, 2886, 5880, 1301, 1302, 2002, 2603, 2609, "
@@ -82,7 +83,7 @@ for stock_id in target_stocks:
     forecast_results.append(res)
     df_p = loader.get_stock_price(stock_id)
     if not df_p.empty and "close" in df_p.columns:
-        latest_prices[stock_id] = df_p["close"].iloc[-1]
+        latest_prices[stock_id] = float(df_p["close"].iloc[-1])
     else:
         latest_prices[stock_id] = 100.0  # 預設價格備用
 
@@ -97,17 +98,16 @@ if run_ai_btn:
     selected_stocks = sorted_stocks[:MAX_POSITIONS]
     
     if len(selected_stocks) < MIN_POSITIONS:
-        st.error(f"⚠️️ 分析標的不足！競賽要求持股需在 {MIN_POSITIONS}~{MAX_POSITIONS} 檔，請至少輸入 20 檔股票。")
+        st.error(f"⚠ 分析標的不足！競賽要求持股需在 {MIN_POSITIONS}~{MAX_POSITIONS} 檔，請至少輸入 20 檔股票。")
     else:
-        # 2. 計算總淨值 (Total Net Asset Value)
+        # 2. 計算完整總淨值 (Total Net Asset Value)
         current_stock_val = sum(
-            st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 0)
-            for s in selected_stocks
+            hold["shares"] * latest_prices.get(s_id, 0.0)
+            for s_id, hold in st.session_state["portfolio"].items()
         )
         total_nav = st.session_state["cash"] + current_stock_val
 
-        # 3. 確定目標股票權重分配 (考慮台積電 25% / 其餘 10% / 現金 < 25%)
-        # 現金部位留 10% (滿足現金 < 25% 規則)，其餘 90% 股票平分或依權重
+        # 3. 確定目標股票權重分配 (保留 10% 現金以滿足 <25% 規範，其餘 90% 投入股票)
         target_stock_allocation_ratio = 0.90  
         num_selected = len(selected_stocks)
         
@@ -118,7 +118,7 @@ if run_ai_btn:
             score = res["forecast_score"]
             signal = res["signal"]
 
-            # 設定單檔持股淨值上限 constraint
+            # 設定單檔持股淨值上限
             max_weight = TSMC_WEIGHT_LIMIT if s_id == "2330" else OTHER_WEIGHT_LIMIT
             max_allowed_val = total_nav * max_weight
 
@@ -126,7 +126,7 @@ if run_ai_btn:
             shares_held = current_holdings["shares"]
 
             if signal in ["BUY", "HOLD"] and score >= 0.40:
-                # 算目標建倉價值 (整股交易，1000 股為 1 張)
+                # 計算目標建倉價值 (整股交易，1000 股為 1 張)
                 target_val = min(max_allowed_val, (total_nav * target_stock_allocation_ratio) / num_selected)
                 
                 if target_val > (shares_held * price):
@@ -248,7 +248,7 @@ with tab_report:
     # 填寫隊伍資訊與交易日期
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        team_id_input = st.text_input("競賽隊伍 ID (team_id)", value="TEAM_042")
+        team_id_input = st.text_input("競賽隊伍 ID (team_id)", value="TEAM_11515")
     with col_t2:
         trade_date_input = st.date_input("交易日期 (trade_date)").strftime("%Y-%m-%d")
     
@@ -262,10 +262,10 @@ with tab_report:
             if hold["shares"] > 0:
                 portfolio_for_dplan[s_id] = {
                     "shares": hold["shares"],
-                    "close_price": vwap_prices.get(s_id, 100.0)
+                    "close_price": latest_prices.get(s_id, 100.0)
                 }
 
-        # 呼叫剛才建立的 generate_dplan_json 函數
+        # 呼叫 generate_dplan_json 函數
         dplan_obj = generate_dplan_json(
             team_id=team_id_input,
             trade_date=trade_date_input,
@@ -290,3 +290,17 @@ with tab_report:
         
         st.write("##### 🔍 D-Plan JSON 內容即時預覽：")
         st.json(dplan_obj)
+
+with tab_inventory:
+    st.write("##### 📦 當前帳戶持股與成本發明細")
+    if inventory_data:
+        st.dataframe(pd.DataFrame(inventory_data), use_container_width=True)
+    else:
+        st.info("目前尚無任何股票持股，請先點選側邊欄的『🚀 執行 AI 決策下單』。")
+
+with tab_history:
+    st.write("##### 📜 歷史下單與交易紀錄")
+    if st.session_state["trade_history"]:
+        st.dataframe(pd.DataFrame(st.session_state["trade_history"]), use_container_width=True)
+    else:
+        st.info("目前尚無歷史交易紀錄。")
