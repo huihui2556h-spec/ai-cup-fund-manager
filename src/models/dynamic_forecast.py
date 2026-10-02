@@ -79,3 +79,8 @@ class MultiAuthorityForecastModel:
             "sub_scores": sub_scores,
             "market_multiplier": taifex_mult
         }
+
+def ai_dynamic_forecast(stock_id: str, authority_data: dict):
+    """供 app.py 舊介面呼叫的相容函式"""
+    model = MultiAuthorityForecastModel()
+    return model.predict_stock_score(stock_id, authority_data)
