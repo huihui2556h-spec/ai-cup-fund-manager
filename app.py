@@ -4,12 +4,27 @@ import numpy as np
 import time
 from datetime import datetime
 
-# 引入官方 150 檔股票名稱對照模組
+# ==========================================
+# 0. 引入官方 150 檔股票名稱對照模組與動態清單
+# ==========================================
 try:
     from src.stock_list.official_stocks import get_official_stock_name
+    import src.stock_list.official_stocks as official_stocks_module
+    
+    # 動態判斷並抓取 150 檔標的清單
+    if hasattr(official_stocks_module, "ESUN_OFFICIAL_150_STOCKS"):
+        _data = official_stocks_module.ESUN_OFFICIAL_150_STOCKS
+        dynamic_stock_list = list(_data.keys()) if isinstance(_data, dict) else list(_data)
+    elif hasattr(official_stocks_module, "OFFICIAL_STOCKS"):
+        _data = official_stocks_module.OFFICIAL_STOCKS
+        dynamic_stock_list = list(_data.keys()) if isinstance(_data, dict) else list(_data)
+    else:
+        dynamic_stock_list = []
+        
 except ImportError:
     def get_official_stock_name(stock_id):
         return f"指定標的_{stock_id}"
+    dynamic_stock_list = []
 
 # 引入 FinMind 與 AI 預測模組
 try:
@@ -53,24 +68,29 @@ st.markdown("---")
 # -------------------------------------------------------------------
 st.sidebar.header("⚙️ AI 智慧策略面板")
 
-# 玉山挑戰賽 150 檔個股清單
-default_stocks = (
-    "2330, 2454, 2308, 2317, 3711, 2881, 2383, 2303, 2882, 3037, "
-    "2891, 1303, 2345, 2382, 2408, 7769, 2412, 2327, 6669, 3017, "
-    "2885, 2887, 2360, 2886, 2059, 6505, 2884, 2880, 2357, 2890, "
-    "8046, 2344, 3231, 2892, 3008, 2356, 2404, 6515, 3533, 2313, "
-    "2337, 5871, 3044, 3702, 1101, 2409, 6239, 2609, 2834, 6139, "
-    "2883, 3443, 3653, 2395, 2301, 6446, 4958, 2603, 5880, 1216, "
-    "3045, 2368, 3665, 4904, 3481, 2379, 1301, 1326, 3189, 3034, "
-    "2207, 2002, 2801, 2449, 1590, 3661, 6770, 3036, 2615, 2618, "
-    "2912, 4938, 2376, 5876, 1519, 6415, 6919, 2324, 2347, 1504, "
-    "7750, 1402, 1605, 2610, 6789, 1802, 8210, 2451, 2812, 2377, "
-    "5274, 3491, 6223, 6121, 6488, 6548, 8299, 1785, 6274, 3363, "
-    "5347, 7828, 3293, 4979, 8069, 6182, 3529, 3163, 3081, 3211, "
-    "3260, 4966, 3105, 4991, 5289, 5903, 5536, 1815, 5483, 3680, "
-    "6147, 8415, 7734, 6290, 6187, 7751, 3264, 6023, 3324, 4772, "
-    "6510, 8932, 8358, 6584, 3374, 3227, 3131, 4123, 4749, 3718"
-)
+# 🎯 將原本寫死的字串，改為自動讀取 src/stock_list 的名單
+if dynamic_stock_list:
+    default_stocks = ", ".join(str(s) for s in dynamic_stock_list)
+else:
+    # 預設備案 (如果模組載入失敗才用這個)
+    default_stocks = (
+        "2330, 2454, 2308, 2317, 3711, 2881, 2383, 2303, 2882, 3037, "
+        "2891, 1303, 2345, 2382, 2408, 7769, 2412, 2327, 6669, 3017, "
+        "2885, 2887, 2360, 2886, 2059, 6505, 2884, 2880, 2357, 2890, "
+        "8046, 2344, 3231, 2892, 3008, 2356, 2404, 6515, 3533, 2313, "
+        "2337, 5871, 3044, 3702, 1101, 2409, 6239, 2609, 2834, 6139, "
+        "2883, 3443, 3653, 2395, 2301, 6446, 4958, 2603, 5880, 1216, "
+        "3045, 2368, 3665, 4904, 3481, 2379, 1301, 1326, 3189, 3034, "
+        "2207, 2002, 2801, 2449, 1590, 3661, 6770, 3036, 2615, 2618, "
+        "2912, 4938, 2376, 5876, 1519, 6415, 6919, 2324, 2347, 1504, "
+        "7750, 1402, 1605, 2610, 6789, 1802, 8210, 2451, 2812, 2377, "
+        "5274, 3491, 6223, 6121, 6488, 6548, 8299, 1785, 6274, 3363, "
+        "5347, 7828, 3293, 4979, 8069, 6182, 3529, 3163, 3081, 3211, "
+        "3260, 4966, 3105, 4991, 5289, 5903, 5536, 1815, 5483, 3680, "
+        "6147, 8415, 7734, 6290, 6187, 7751, 3264, 6023, 3324, 4772, "
+        "6510, 8932, 8358, 6584, 3374, 3227, 3131, 4123, 4749, 3718"
+    )
+
 stock_input = st.sidebar.text_area("AI 掃描官方標的清單 (150檔)", default_stocks, height=200)
 target_stocks = [s.strip() for s in stock_input.split(",") if s.strip()]
 
@@ -106,9 +126,6 @@ def get_forecast_cached(stock_id):
         return {"stock_id": stock_id, "forecast_score": 0.5, "signal": "HOLD", "error": str(e)}
 
 # -------------------------------------------------------------------
-# 4. 執行 AI 決策下單邏輯
-# -------------------------------------------------------------------
-# -------------------------------------------------------------------
 # 4. 執行 AI 決策下單邏輯 (加入 session_state 持久化儲存)
 # -------------------------------------------------------------------
 if "forecast_results_state" not in st.session_state:
@@ -120,7 +137,7 @@ if run_ai_btn:
     latest_prices = {}
     
     progress_bar = st.progress(0, text="🤖 AI 正在進行多維度籌碼與波動慣性運算...")
-    
+
     for i, stock_id in enumerate(target_stocks):
         res = get_forecast_cached(stock_id)
         score = res.get("forecast_score", 0.5) if isinstance(res, dict) else 0.5
@@ -149,6 +166,7 @@ if run_ai_btn:
     # 1. 依分數排序並選出 20~30 檔
     sorted_stocks = sorted(forecast_results, key=lambda x: x["forecast_score"], reverse=True)
     selected_stocks = [s for s in sorted_stocks if s["forecast_score"] >= score_threshold]
+    
     if len(selected_stocks) < MIN_POSITIONS:
         selected_stocks = sorted_stocks[:MIN_POSITIONS]
     elif len(selected_stocks) > MAX_POSITIONS:
@@ -159,13 +177,14 @@ if run_ai_btn:
         for s in selected_stocks
     )
     total_nav = st.session_state["cash"] + current_stock_val
-    
+
     # 2. AI 動態權重配置
     raw_scores = [s["forecast_score"] for s in selected_stocks]
     score_sum = sum(raw_scores) if sum(raw_scores) > 0 else 1.0
-    target_allocation_pool = 0.90 
     
+    target_allocation_pool = 0.90
     stock_target_weights = {}
+    
     for s in selected_stocks:
         s_id = s["stock_id"]
         weight = (s["forecast_score"] / score_sum) * target_allocation_pool
@@ -177,10 +196,11 @@ if run_ai_btn:
 
     # 3. 執行下單與部位調整
     selected_ids = [s["stock_id"] for s in selected_stocks]
-    
+
     for s_id in list(st.session_state["portfolio"].keys()):
         current_holdings = st.session_state["portfolio"][s_id]
         shares_held = current_holdings.get("shares", 0) if isinstance(current_holdings, dict) else current_holdings
+        
         if shares_held > 0 and s_id not in selected_ids:
             price = latest_prices.get(s_id, 350.0)
             gross_revenue = shares_held * price
@@ -190,12 +210,13 @@ if run_ai_btn:
             
             st.session_state["cash"] += net_revenue
             st.session_state["portfolio"][s_id] = {"shares": 0, "avg_cost": 0.0}
+            
             st.session_state["trade_history"].append({
                 "時間": now_str, "股票代碼": s_id, "股票名稱": get_official_stock_name(s_id),
-                "動作": "平倉 (SELL)", "成交單價": price, "整股(股)": shares_held, 
+                "動作": "平倉 (SELL)", "成交單價": price, "整股(股)": shares_held,
                 "淨入帳金額": net_revenue, "備註": "未達 AI 選股名單"
             })
-    
+
     for s in selected_stocks:
         s_id = s["stock_id"]
         stock_name = get_official_stock_name(s_id)
@@ -207,13 +228,13 @@ if run_ai_btn:
         
         current_holdings = st.session_state["portfolio"].get(s_id, {"shares": 0, "avg_cost": 0.0})
         if not isinstance(current_holdings, dict):
-            current_holdings = {"shares": current_holdings, "avg_cost": price}
+             current_holdings = {"shares": current_holdings, "avg_cost": price}
         
         shares_held = current_holdings.get("shares", 0)
         current_val = shares_held * price
         val_diff = target_val - current_val
         
-        if abs(val_diff) > (price * 1000):
+        if abs(val_diff) > (price * 1000): 
             if val_diff > 0:
                 buy_lots = int(val_diff // (price * 1000))
                 buy_shares = buy_lots * 1000
@@ -221,7 +242,6 @@ if run_ai_btn:
                     gross_cost = buy_shares * price
                     fee = gross_cost * FEE_RATE
                     total_cost = gross_cost + fee
-                    
                     if st.session_state["cash"] >= total_cost:
                         st.session_state["cash"] -= total_cost
                         new_shares = shares_held + buy_shares
@@ -230,7 +250,7 @@ if run_ai_btn:
                         
                         st.session_state["trade_history"].append({
                             "時間": now_str, "股票代碼": s_id, "股票名稱": stock_name,
-                            "動作": "買進 (BUY)", "成交單價": price, "整股(股)": buy_shares, 
+                            "動作": "買進 (BUY)", "成交單價": price, "整股(股)": buy_shares,
                             "扣款總額": total_cost, "AI 評分": round(score, 4), "配置權重": f"{target_weight*100:.2f}%"
                         })
             else:
@@ -242,14 +262,13 @@ if run_ai_btn:
                     fee = gross_revenue * FEE_RATE
                     tax = gross_revenue * TAX_RATE
                     net_revenue = gross_revenue - fee - tax
-                    
                     st.session_state["cash"] += net_revenue
                     new_shares = shares_held - sell_shares
                     st.session_state["portfolio"][s_id] = {"shares": new_shares, "avg_cost": current_holdings.get("avg_cost", price)}
                     
                     st.session_state["trade_history"].append({
                         "時間": now_str, "股票代碼": s_id, "股票名稱": stock_name,
-                        "動作": "減碼 (TRIM)", "成交單價": price, "整股(股)": sell_shares, 
+                        "動作": "減碼 (TRIM)", "成交單價": price, "整股(股)": sell_shares,
                         "淨入帳金額": net_revenue, "備註": "AI 動態權重調降"
                     })
                     
@@ -260,7 +279,6 @@ if run_ai_btn:
 # -------------------------------------------------------------------
 stock_market_value = 0.0
 inventory_data = []
-
 portfolio_dict = st.session_state.get("portfolio", {})
 
 for s_id, hold in portfolio_dict.items():
@@ -270,22 +288,18 @@ for s_id, hold in portfolio_dict.items():
     else:
         s_shares = hold
         avg_cost = 0.0
-
+        
     if s_shares > 0:
         cur_p = latest_prices.get(s_id, 100.0) if 'latest_prices' in locals() else 100.0
         mkt_val = s_shares * cur_p
         stock_market_value += mkt_val
-        
         pnl = (cur_p - avg_cost) * s_shares
         pnl_pct = ((cur_p - avg_cost) / avg_cost) * 100 if avg_cost > 0 else 0
         
         inventory_data.append({
-            "股票代碼": s_id,
-            "股票名稱": get_official_stock_name(s_id),
-            "持股張數": int(s_shares // 1000),
-            "平均成本": f"${avg_cost:.2f}",
-            "當前收盤價": f"${cur_p:.2f}",
-            "持股市值": f"${mkt_val:,.0f}",
+            "股票代碼": s_id, "股票名稱": get_official_stock_name(s_id),
+            "持股張數": int(s_shares // 1000), "平均成本": f"${avg_cost:.2f}",
+            "當前收盤價": f"${cur_p:.2f}", "持股市值": f"${mkt_val:,.0f}",
             "未實現損益": f"${pnl:+,.0f} ({pnl_pct:+.2f}%)"
         })
 
@@ -316,13 +330,11 @@ with c1:
         st.success(f"✅ 持股檔數合規: {active_positions_count} 檔 (符合 20~30 檔)")
     else:
         st.error(f"❌ 持股檔數未達標: {active_positions_count} 檔 (需保持 20~30 檔)")
-        
 with c2:
     if cash_ratio < 25.0:
         st.success(f"✅ 現金部位合規: {cash_ratio:.2f}% (符合 < 25%)")
     else:
         st.error(f"❌ 現金部位超標: {cash_ratio:.2f}% (必須 < 25%)")
-        
 with c3:
     if tsmc_ratio <= 25.0:
         st.success(f"✅ 台積電權重合規: {tsmc_ratio:.2f}% (符合 <= 25%)")
@@ -346,7 +358,6 @@ with tab_inventory:
     if inventory_data:
         df_inventory = pd.DataFrame(inventory_data)
         st.dataframe(df_inventory, use_container_width=True)
-        
         csv_data = df_inventory.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
             label="📥 下載持股部位 (CSV)",
