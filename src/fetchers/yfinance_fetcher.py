@@ -1,28 +1,52 @@
-import sys
 import os
-
-# ==========================================
-# 🎯 0. 【終極修復】強制將專案根目錄加入系統路徑
-# ==========================================
-# 取得目前這個檔案的絕對路徑，並往上推兩層回到專案根目錄
-current_dir = os.path.dirname(os.path.abspath(__file__)) # 目前在 src/fetchers
-src_dir = os.path.dirname(current_dir)                   # 往上一層到 src
-project_root = os.path.dirname(src_dir)                  # 再往上一層到根目錄
-
-# 強制把根目錄塞進 Python 的搜尋路徑最前面
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
+import sys
+import importlib.util
 import pandas as pd
 import yfinance as yf
 import time
 import sqlite3
 
-# 現在絕對可以順利載入 src 裡面的東西了！
-from src.stock_list.official_stocks import OFFICIAL_STOCKS
+# ==========================================
+# 🎯 0. 【無敵防呆版】直接讀取實體檔案，繞過所有模組載入機制
+# ==========================================
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 推導出 official_stocks.py 的實體絕對路徑
+target_file = os.path.join(os.path.dirname(current_dir), "stock_list", "official_stocks.py")
+
+print(f"🔍 系統正在尋找股票名單檔案：{target_file}")
+
+# 如果檔案真的不存在，會印出非常明確的除錯提示
+if not os.path.exists(target_file):
+    print("❌ 嚴重錯誤：找不到檔案！")
+    print("💡 請回 GitHub 首頁檢查：")
+    print("1. 您的資料夾是否拼錯？(例如 stock_list 不小心拼成 stock_lists?)")
+    print("2. 檔案名稱是否正確？")
+    sys.exit(1)
+
+# 強制讀取檔案
+spec = importlib.util.spec_from_file_location("official_stocks", target_file)
+official_stocks_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(official_stocks_module)
+
+# 自動判斷您裡面是用字典還是清單
+tickers = []
+ticker_to_name = {}
+
+if hasattr(official_stocks_module, "ESUN_OFFICIAL_150_STOCKS"):
+    STOCK_DATA = official_stocks_module.ESUN_OFFICIAL_150_STOCKS
+    for stock_id, name in STOCK_DATA.items():
+        tickers.append(f"{stock_id}.TW")
+        ticker_to_name[f"{stock_id}.TW"] = name
+elif hasattr(official_stocks_module, "OFFICIAL_STOCKS"):
+    STOCK_DATA = official_stocks_module.OFFICIAL_STOCKS
+    for stock_id in STOCK_DATA:
+        tickers.append(f"{stock_id}.TW")
+        ticker_to_name[f"{stock_id}.TW"] = "未知公司"
+else:
+    print("❌ 嚴重錯誤：檔案找到了，但在 official_stocks.py 中找不到正確的變數名稱！")
+    sys.exit(1)
 
 def fetch_and_split_max_history_interactive():
-    # 建立儲存資料夾
     output_dir = os.path.join(current_dir, "historical_data")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -30,24 +54,18 @@ def fetch_and_split_max_history_interactive():
 
     temp_db = os.path.join(output_dir, "temp_stock_data.db")
     
-    # 判斷是否為 GitHub Actions
     if os.environ.get('GITHUB_ACTIONS') == 'true':
         print("\n[🤖 GitHub Actions 模式] 自動設定為全量抓取。")
         limit_input = 'all'
     else:
         limit_input = input("📊 請輸入要抓取的股票筆數 (輸入 'all' 代表抓全部): ").strip()
 
-    print("正在載入 AI CUP 官方 150 檔標的清單...")
-    tickers = []
+    print(f"✅ 成功載入 AI CUP 官方 {len(tickers)} 檔標的清單！")
     
-    # 使用最初版本的 OFFICIAL_STOCKS 清單
-    for stock_id in OFFICIAL_STOCKS:
-        yahoo_ticker = f"{stock_id}.TW"
-        tickers.append(yahoo_ticker)
-
+    local_tickers = tickers.copy()
     if limit_input.lower() != 'all' and limit_input.isdigit():
         limit = int(limit_input)
-        tickers = tickers[:limit]
+        local_tickers = local_tickers[:limit]
         
     if os.path.exists(temp_db):
         os.remove(temp_db)
@@ -57,22 +75,24 @@ def fetch_and_split_max_history_interactive():
         'Ticker': 'Yahoo 代號', 'Date': '交易日期',
         'Open': '開盤價', 'High': '最高價', 'Low': '最低價', 'Close': '收盤價', 'Volume': '成交量'
     }
-    keep_cols = ['Yahoo 代號', '交易日期', '開盤價', '最高價', '最低價', '收盤價', '成交量']
+    keep_cols = ['Yahoo 代號', '公司名稱', '交易日期', '開盤價', '最高價', '最低價', '收盤價', '成交量']
     period = "max" 
     
     print(f"\n開始從 Yahoo Finance 抓取資料 (範圍: {period})...")
 
-    for i, ticker in enumerate(tickers, 1):
-        print(f"[{i}/{len(tickers)}] 正在抓取: {ticker}...")
+    for i, ticker in enumerate(local_tickers, 1):
+        print(f"[{i}/{len(local_tickers)}] 正在抓取: {ticker} ({ticker_to_name.get(ticker, '')})...")
         try:
             stock = yf.Ticker(ticker)
             df = stock.history(period=period)
 
+            # 嘗試切換上櫃代號
             if df.empty and ticker.endswith('.TW'):
                 two_ticker = ticker.replace('.TW', '.TWO')
                 stock = yf.Ticker(two_ticker)
                 df = stock.history(period=period)
                 if not df.empty:
+                    ticker_to_name[two_ticker] = ticker_to_name.pop(ticker)
                     ticker = two_ticker
 
             if not df.empty:
@@ -85,6 +105,8 @@ def fetch_and_split_max_history_interactive():
                     df['Date'] = df['Date_Str']
                     
                 df['Ticker'] = ticker
+                df['Name'] = ticker_to_name.get(ticker, "未知公司")
+                
                 df = df.rename(columns=columns_mapping)
                 all_needed_cols = keep_cols + ['Year', 'YearMonth']
                 df = df[[c for c in all_needed_cols if c in df.columns]]
@@ -115,7 +137,7 @@ def fetch_and_split_max_history_interactive():
                     
                     for month_str in unique_months:
                         data_query = f"""
-                            SELECT [Yahoo 代號], [交易日期], [開盤價], [最高價], [最低價], [收盤價], [成交量] 
+                            SELECT [Yahoo 代號], [公司名稱], [交易日期], [開盤價], [最高價], [最低價], [收盤價], [成交量] 
                             FROM stock_table 
                             WHERE YearMonth = '{month_str}'
                             ORDER BY [交易日期] DESC, [Yahoo 代號] ASC
