@@ -1,7 +1,10 @@
 name: 執行歷史資料爬蟲並存檔
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 保留這個，讓您隨時可以手動點擊執行按鈕
+  schedule:
+    # 每天 UTC 時間 00:00 執行 (等於台灣時間早上 08:00)
+    - cron: '0 0 * * *'
 
 permissions:
   contents: write 
@@ -28,7 +31,7 @@ jobs:
           export PYTHONPATH=$GITHUB_WORKSPACE
           python src/fetchers/yfinance_fetcher.py
 
-      - name: Commit and Push changes (將 Excel 檔案傳回 GitHub)
+      - name: Commit and Push changes (將資料傳回 GitHub)
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
