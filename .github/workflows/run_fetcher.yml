@@ -24,7 +24,9 @@ jobs:
           pip install pandas yfinance openpyxl
 
       - name: Run Fetcher Script (執行爬蟲程式)
-        run: python src/fetchers/yfinance_fetcher.py
+        env:
+          PYTHONPATH: .
+        run: python -m src.fetchers.yfinance_fetcher
 
       - name: Commit and Push changes (將 Excel 檔案傳回 GitHub)
         run: |
