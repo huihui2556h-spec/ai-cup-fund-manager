@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import time
 from datetime import datetime
+import os
+import glob
 
 # ==========================================
 # 0. 引入官方 150 檔股票名稱對照模組與動態清單
@@ -11,7 +13,6 @@ try:
     from src.stock_list.official_stocks import get_official_stock_name
     import src.stock_list.official_stocks as official_stocks_module
     
-    # 動態判斷並抓取 150 檔標的清單
     if hasattr(official_stocks_module, "ESUN_OFFICIAL_150_STOCKS"):
         _data = official_stocks_module.ESUN_OFFICIAL_150_STOCKS
         dynamic_stock_list = list(_data.keys()) if isinstance(_data, dict) else list(_data)
@@ -20,7 +21,6 @@ try:
         dynamic_stock_list = list(_data.keys()) if isinstance(_data, dict) else list(_data)
     else:
         dynamic_stock_list = []
-        
 except ImportError:
     def get_official_stock_name(stock_id):
         return f"指定標的_{stock_id}"
@@ -42,16 +42,15 @@ st.set_page_config(
     layout="wide"
 )
 
-INITIAL_CAPITAL = 1_000_000_000.0  # 10 億元初始資金
-MIN_POSITIONS = 20                 # 最少持股檔數
-MAX_POSITIONS = 30                 # 最多持股檔數
-TSMC_WEIGHT_LIMIT = 0.25           # 2330.tw 上限 25%
-OTHER_WEIGHT_LIMIT = 0.10          # 其餘個股上限 10%
-MAX_CASH_RATIO = 0.25              # 現金部位每日必須 < 25%
-FEE_RATE = 0.001425                # 券商手續費 0.1425%
-TAX_RATE = 0.003                   # 證券交易稅 0.3%
+INITIAL_CAPITAL = 1_000_000_000.0  
+MIN_POSITIONS = 20                 
+MAX_POSITIONS = 30                 
+TSMC_WEIGHT_LIMIT = 0.25           
+OTHER_WEIGHT_LIMIT = 0.10          
+MAX_CASH_RATIO = 0.25              
+FEE_RATE = 0.001425                
+TAX_RATE = 0.003                   
 
-# 初始化 Session 狀態 (十億元帳戶)
 if "cash" not in st.session_state:
     st.session_state["cash"] = INITIAL_CAPITAL
 if "portfolio" not in st.session_state:
@@ -68,28 +67,10 @@ st.markdown("---")
 # -------------------------------------------------------------------
 st.sidebar.header("⚙️ AI 智慧策略面板")
 
-# 🎯 將原本寫死的字串，改為自動讀取 src/stock_list 的名單
 if dynamic_stock_list:
     default_stocks = ", ".join(str(s) for s in dynamic_stock_list)
 else:
-    # 預設備案 (如果模組載入失敗才用這個)
-    default_stocks = (
-        "2330, 2454, 2308, 2317, 3711, 2881, 2383, 2303, 2882, 3037, "
-        "2891, 1303, 2345, 2382, 2408, 7769, 2412, 2327, 6669, 3017, "
-        "2885, 2887, 2360, 2886, 2059, 6505, 2884, 2880, 2357, 2890, "
-        "8046, 2344, 3231, 2892, 3008, 2356, 2404, 6515, 3533, 2313, "
-        "2337, 5871, 3044, 3702, 1101, 2409, 6239, 2609, 2834, 6139, "
-        "2883, 3443, 3653, 2395, 2301, 6446, 4958, 2603, 5880, 1216, "
-        "3045, 2368, 3665, 4904, 3481, 2379, 1301, 1326, 3189, 3034, "
-        "2207, 2002, 2801, 2449, 1590, 3661, 6770, 3036, 2615, 2618, "
-        "2912, 4938, 2376, 5876, 1519, 6415, 6919, 2324, 2347, 1504, "
-        "7750, 1402, 1605, 2610, 6789, 1802, 8210, 2451, 2812, 2377, "
-        "5274, 3491, 6223, 6121, 6488, 6548, 8299, 1785, 6274, 3363, "
-        "5347, 7828, 3293, 4979, 8069, 6182, 3529, 3163, 3081, 3211, "
-        "3260, 4966, 3105, 4991, 5289, 5903, 5536, 1815, 5483, 3680, "
-        "6147, 8415, 7734, 6290, 6187, 7751, 3264, 6023, 3324, 4772, "
-        "6510, 8932, 8358, 6584, 3374, 3227, 3131, 4123, 4749, 3718"
-    )
+    default_stocks = "2330, 2454, 2317, 2881, 2882" # 簡化備案
 
 stock_input = st.sidebar.text_area("AI 掃描官方標的清單 (150檔)", default_stocks, height=200)
 target_stocks = [s.strip() for s in stock_input.split(",") if s.strip()]
@@ -107,7 +88,7 @@ if reset_btn:
     st.sidebar.success("帳戶已重置為 10 億元初始資金！")
 
 # -------------------------------------------------------------------
-# 3. 安全的 API 資料獲取與快取處理
+# 3. 安全的 API 資料獲取與快取處理 (加入讀取本地 CSV 功能)
 # -------------------------------------------------------------------
 @st.cache_resource
 def get_loader():
@@ -124,6 +105,40 @@ def get_forecast_cached(stock_id):
         return res
     except Exception as e:
         return {"stock_id": stock_id, "forecast_score": 0.5, "signal": "HOLD", "error": str(e)}
+
+# 🎯 新增：自動讀取 historical_data 抓最新收盤價
+@st.cache_data(ttl=3600)
+def load_latest_prices_from_csv():
+    prices_dict = {}
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(base_dir, "src", "fetchers", "historical_data")
+        if not os.path.exists(data_dir):
+            return prices_dict
+            
+        csv_files = glob.glob(os.path.join(data_dir, "*.csv"))
+        if not csv_files:
+            return prices_dict
+        
+        # 排序找到最新的年份 CSV
+        csv_files.sort(reverse=True)
+        latest_file = csv_files[0]
+        
+        df = pd.read_csv(latest_file, encoding='utf-8-sig')
+        if "交易日期" in df.columns and "Yahoo 代號" in df.columns and "收盤價" in df.columns:
+            # 確保照日期新到舊排序
+            df = df.sort_values(by="交易日期", ascending=False)
+            # 每一檔股票只留第一筆 (也就是最新的一天)
+            df_latest = df.drop_duplicates(subset=["Yahoo 代號"], keep="first")
+            for _, row in df_latest.iterrows():
+                ticker = str(row["Yahoo 代號"]).split(".")[0] # 去掉 .TW
+                prices_dict[ticker] = float(row["收盤價"])
+    except Exception as e:
+        pass
+    return prices_dict
+
+# 在每次網頁刷新時，取得最新的 CSV 價格字典
+local_prices = load_latest_prices_from_csv()
 
 # -------------------------------------------------------------------
 # 4. 執行 AI 決策下單邏輯 (加入 session_state 持久化儲存)
@@ -145,25 +160,17 @@ if run_ai_btn:
         res["stock_name"] = get_official_stock_name(stock_id)
         forecast_results.append(res)
         
-        try:
-            df_p = loader.get_stock_price(stock_id)
-            if df_p is not None and not df_p.empty and "close" in df_p.columns:
-                latest_prices[stock_id] = float(df_p["close"].iloc[-1])
-            else:
-                latest_prices[stock_id] = 350.0  # 賦予更真實的台股預設價，避免全為 100
-        except Exception:
-            latest_prices[stock_id] = 350.0
+        # 🎯 改良：直接優先使用剛剛從 CSV 讀取到的真實價格，若找不到才預設 100
+        latest_prices[stock_id] = local_prices.get(stock_id, 100.0)
             
-        time.sleep(0.01)
         progress_bar.progress((i + 1) / len(target_stocks), text=f"正在分析: {get_official_stock_name(stock_id)} ({stock_id})")
+        time.sleep(0.01) # 讓進度條順暢
         
     progress_bar.empty()
 
-    # 將預測結果存入 session，避免重新整理後消失
     st.session_state["forecast_results_state"] = forecast_results
     st.session_state["latest_prices_state"] = latest_prices
 
-    # 1. 依分數排序並選出 20~30 檔
     sorted_stocks = sorted(forecast_results, key=lambda x: x["forecast_score"], reverse=True)
     selected_stocks = [s for s in sorted_stocks if s["forecast_score"] >= score_threshold]
     
@@ -173,12 +180,11 @@ if run_ai_btn:
         selected_stocks = selected_stocks[:MAX_POSITIONS]
 
     current_stock_val = sum(
-        st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 350.0)
+        st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 100.0)
         for s in selected_stocks
     )
     total_nav = st.session_state["cash"] + current_stock_val
 
-    # 2. AI 動態權重配置
     raw_scores = [s["forecast_score"] for s in selected_stocks]
     score_sum = sum(raw_scores) if sum(raw_scores) > 0 else 1.0
     
@@ -194,7 +200,6 @@ if run_ai_btn:
             weight = min(weight, OTHER_WEIGHT_LIMIT)
         stock_target_weights[s_id] = weight
 
-    # 3. 執行下單與部位調整
     selected_ids = [s["stock_id"] for s in selected_stocks]
 
     for s_id in list(st.session_state["portfolio"].keys()):
@@ -202,7 +207,7 @@ if run_ai_btn:
         shares_held = current_holdings.get("shares", 0) if isinstance(current_holdings, dict) else current_holdings
         
         if shares_held > 0 and s_id not in selected_ids:
-            price = latest_prices.get(s_id, 350.0)
+            price = latest_prices.get(s_id, 100.0)
             gross_revenue = shares_held * price
             fee = gross_revenue * FEE_RATE
             tax = gross_revenue * TAX_RATE
@@ -220,7 +225,7 @@ if run_ai_btn:
     for s in selected_stocks:
         s_id = s["stock_id"]
         stock_name = get_official_stock_name(s_id)
-        price = latest_prices.get(s_id, 350.0)
+        price = latest_prices.get(s_id, 100.0)
         score = s["forecast_score"]
         
         target_weight = stock_target_weights.get(s_id, 0.03)
@@ -290,7 +295,8 @@ for s_id, hold in portfolio_dict.items():
         avg_cost = 0.0
         
     if s_shares > 0:
-        cur_p = latest_prices.get(s_id, 100.0) if 'latest_prices' in locals() else 100.0
+        # 🎯 改良：隨時從 CSV 讀取真實最新價
+        cur_p = local_prices.get(s_id, 100.0) 
         mkt_val = s_shares * cur_p
         stock_market_value += mkt_val
         pnl = (cur_p - avg_cost) * s_shares
@@ -307,7 +313,8 @@ total_assets = st.session_state["cash"] + stock_market_value
 cash_ratio = (st.session_state["cash"] / total_assets) * 100 if total_assets > 0 else 0
 
 tsmc_shares = portfolio_dict.get("2330", {}).get("shares", 0) if isinstance(portfolio_dict.get("2330"), dict) else 0
-tsmc_val = tsmc_shares * (latest_prices.get("2330", 100.0) if 'latest_prices' in locals() else 100.0)
+# 🎯 改良：台積電權重也是用真實報價算
+tsmc_val = tsmc_shares * local_prices.get("2330", 100.0)
 tsmc_ratio = (tsmc_val / total_assets) * 100 if total_assets > 0 else 0
 
 active_positions_count = len(inventory_data)
@@ -321,7 +328,6 @@ m4.metric("目前持股總檔數", f"{active_positions_count} 檔", "競賽限�
 
 st.markdown("---")
 
-# 風控合規性檢核卡片
 st.subheader("🛡️ 競賽風控合規性檢核 (Compliance Control)")
 c1, c2, c3 = st.columns(3)
 
@@ -352,23 +358,14 @@ with tab_ai:
     if 'forecast_results' in locals() and forecast_results:
         df_ai = pd.DataFrame(forecast_results)
         
-        # 1. 整理主分數：四捨五入到小數點後 3 位
         if "forecast_score" in df_ai.columns:
             df_ai["forecast_score"] = df_ai["forecast_score"].round(3)
             
-        # 2. 處理異常的 sub_scores：把 JSON 字典展開成獨立欄位
         if "sub_scores" in df_ai.columns:
-            # 確保內容是字典，並轉換為 DataFrame
             sub_dicts = df_ai["sub_scores"].apply(lambda x: x if isinstance(x, dict) else {})
             sub_df = pd.DataFrame(sub_dicts.tolist())
-            
-            # 解決 0.799999 的浮點數問題，四捨五入到小數點後 2 位
             sub_df = sub_df.round(2)
-            
-            # 幫展開的欄位加上前綴，例如「子指標_twse_tpex」
             sub_df.columns = [f"子指標_{col}" for col in sub_df.columns]
-            
-            # 刪除原本醜醜的 JSON 欄位，把新欄位接上去
             df_ai = pd.concat([df_ai.drop(columns=["sub_scores"]), sub_df], axis=1)
 
         st.dataframe(df_ai, use_container_width=True)
