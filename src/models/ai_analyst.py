@@ -3,9 +3,16 @@ import json
 from google import genai
 from google.genai import types
 
+# 嘗試自動載入 .env 檔案（如果有的話）
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 def fetch_dynamic_ai_analysis(forecast_results, nav):
     """
-    直接在程式碼中帶入金鑰，呼叫 Gemini API 生成專業市場與個股推論
+    從環境變數讀取金鑰，呼叫 Gemini API 生成專業市場與個股推論
     """
     summary_data = []
     for res in forecast_results:
@@ -27,10 +34,13 @@ def fetch_dynamic_ai_analysis(forecast_results, nav):
     """
 
     try:
-        # 直接把你的 API 金鑰寫在這裡
-        my_api_key = "AQ.Ab8RN6LcglIEwuGlsurG_hJ7wTzIp0f-3IUNHrSXUE0gCk1wJA"
+        # 從環境變數抓取 GEMINI_API_KEY
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("⚠️ 警告：未偵測到 GEMINI_API_KEY 環境變數。")
+            return None
         
-        client = genai.Client(api_key=my_api_key)
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
