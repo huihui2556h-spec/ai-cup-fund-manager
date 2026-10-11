@@ -2,6 +2,7 @@ import json
 import math
 from datetime import datetime, timezone, timedelta
 from src.models.ai_analyst import fetch_dynamic_ai_analysis
+from src.stock_list.official_stocks import get_official_stock_name
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
@@ -15,8 +16,6 @@ def generate_dplan_json(
 ) -> dict:
     
     now_str = datetime.now(TAIPEI_TZ).isoformat(timespec='seconds')
-    
-    # 🚀 1. 動態呼叫 AI 取得即時市場與個股推論分析
     ai_insights = fetch_dynamic_ai_analysis(forecast_results, nav)
     
     if ai_insights:
@@ -26,7 +25,6 @@ def generate_dplan_json(
         market_logic = "量化指標顯示盤勢震盪，維持中性建倉與風險控管策略。"
         stock_inferences_map = {}
 
-    # 2. Sources (資料來源)
     sources = [
         {
             "source_id": "S1",
@@ -42,10 +40,9 @@ def generate_dplan_json(
         }
     ]
 
-    # 3. Market View (動態 AI 觀點)
     market_view = {
         "basis_refs": ["O1", "O2"],
-        "logic": market_logic,  # 來自 AI 動態生成的觀點
+        "logic": market_logic,
         "regime": "neutral",
         "stance": "neutral",
         "posture": {
@@ -66,12 +63,13 @@ def generate_dplan_json(
 
     for res in forecast_results:
         s_id = str(res["stock_id"])
+        stock_name = get_official_stock_name(s_id) # 從獨立股票名單資料夾取得正確名稱
         score = res["forecast_score"]
         signal = res["signal"]
         
-        holding_info = current_portfolio.get(s_id, {"shares": 0, "close_price": 100.0})
-        current_shares = holding_info["shares"]
-        close_price = holding_info["close_price"]
+        holding_info = current_portfolio.get(s_id, {})
+        current_shares = holding_info.get("shares", 0)
+        close_price = holding_info.get("close_price", res.get("close_price", 100.0))
 
         if signal in ["BUY", "HOLD"] and score >= 0.40:
             target_weight = 0.23 if s_id == "2330" else 0.04
@@ -81,11 +79,8 @@ def generate_dplan_json(
         target_shares = math.floor((target_weight * nav) / (close_price * 1000.0)) * 1000
         order_shares = target_shares - current_shares
 
-        # 🚀 優先採用 AI 動態生成的該檔股票推論，若無則用預設量化文字
-        dynamic_inf_logic = stock_inferences_map.get(
-            s_id, 
-            f"股票 {s_id} AI 綜合評分 {score:.2f}，訊號為 {signal}，符合最佳化配置。"
-        )
+        default_logic = f"{stock_name} ({s_id}) AI 綜合評分 {score:.2f}，收盤價 {close_price} 元，訊號為 {signal}，符合動態資產配置。"
+        dynamic_inf_logic = stock_inferences_map.get(s_id, default_logic)
 
         inf_id = f"I{inf_counter}"
         inf_counter += 1
@@ -132,15 +127,15 @@ def generate_dplan_json(
                 })
                 handled_tickers.add(s_id)
 
-    # 確保既有持股 100% 覆蓋
     for s_id, hold_info in current_portfolio.items():
-        if hold_info["shares"] > 0 and s_id not in handled_tickers:
+        if hold_info.get("shares", 0) > 0 and s_id not in handled_tickers:
+            stock_name = get_official_stock_name(s_id)
             inf_id = f"I{inf_counter}"
             inf_counter += 1
             inferences.append({
                 "inf_id": inf_id,
                 "premise_refs": ["O1"],
-                "logic": f"股票 {s_id} 維持既有部位不作變動，符合現階段資產配置與風險控管。",
+                "logic": f"{stock_name} ({s_id}) 維持既有部位不作變動，符合現階段風險控管。",
                 "counter_evidence": None
             })
             no_trade_decisions.append({
