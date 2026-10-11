@@ -7,28 +7,21 @@ import time
 import sqlite3
 
 # ==========================================
-# 🎯 0. 【無敵防呆版】直接讀取實體檔案，繞過所有模組載入機制
+# 🎯 0. 讀取實體檔案，繞過模組載入機制
 # ==========================================
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# 推導出 official_stocks.py 的實體絕對路徑
 target_file = os.path.join(os.path.dirname(current_dir), "stock_list", "official_stocks.py")
 
 print(f"🔍 系統正在尋找股票名單檔案：{target_file}")
 
-# 如果檔案真的不存在，會印出非常明確的除錯提示
 if not os.path.exists(target_file):
     print("❌ 嚴重錯誤：找不到檔案！")
-    print("💡 請回 GitHub 首頁檢查：")
-    print("1. 您的資料夾是否拼錯？(例如 stock_list 不小心拼成 stock_lists?)")
-    print("2. 檔案名稱是否正確？")
     sys.exit(1)
 
-# 強制讀取檔案
 spec = importlib.util.spec_from_file_location("official_stocks", target_file)
 official_stocks_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(official_stocks_module)
 
-# 自動判斷您裡面是用字典還是清單
 tickers = []
 ticker_to_name = {}
 
@@ -101,14 +94,13 @@ def fetch_and_split_max_history_interactive():
                     df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
                     df['Date_Str'] = df['Date'].dt.strftime('%Y-%m-%d')
                     df['Year'] = df['Date'].dt.strftime('%Y')
-                    df['YearMonth'] = df['Date'].dt.strftime('%Y-%m')
                     df['Date'] = df['Date_Str']
                     
                 df['Ticker'] = ticker
                 df['Name'] = ticker_to_name.get(ticker, "未知公司")
                 
                 df = df.rename(columns=columns_mapping)
-                all_needed_cols = keep_cols + ['Year', 'YearMonth']
+                all_needed_cols = keep_cols + ['Year']
                 df = df[[c for c in all_needed_cols if c in df.columns]]
                 
                 df.to_sql('stock_table', conn, if_exists='append', index=False)
@@ -121,7 +113,7 @@ def fetch_and_split_max_history_interactive():
         if i % 50 == 0:
             time.sleep(5)
 
-    print("\n準備按「年分檔、月分頁」匯出 Excel 檔案...")
+    print("\n準備匯出 CSV 檔案 (以年份分檔)...")
     try:
         check_empty = pd.read_sql('SELECT COUNT(*) FROM stock_table', conn).iloc[0,0]
         if check_empty > 0:
@@ -129,28 +121,26 @@ def fetch_and_split_max_history_interactive():
             unique_years = years_df['Year'].dropna().tolist()
             
             for year in unique_years:
-                output_file = os.path.join(output_dir, f"股市資料_{year}.xlsx")
-                with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-                    months_query = f"SELECT DISTINCT YearMonth FROM stock_table WHERE Year = '{year}' ORDER BY YearMonth DESC"
-                    months_df = pd.read_sql(months_query, conn)
-                    unique_months = months_df['YearMonth'].tolist()
-                    
-                    for month_str in unique_months:
-                        data_query = f"""
-                            SELECT [Yahoo 代號], [公司名稱], [交易日期], [開盤價], [最高價], [最低價], [收盤價], [成交量] 
-                            FROM stock_table 
-                            WHERE YearMonth = '{month_str}'
-                            ORDER BY [交易日期] DESC, [Yahoo 代號] ASC
-                        """
-                        month_data_df = pd.read_sql(data_query, conn)
-                        sheet_name = f"{month_str.split('-')[1]}月"
-                        month_data_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                        del month_data_df
-                print(f"🎉 '{output_file}' 儲存成功！")
+                output_file = os.path.join(output_dir, f"股市資料_{year}.csv")
+                
+                # 直接撈取該年度所有資料
+                data_query = f"""
+                    SELECT [Yahoo 代號], [公司名稱], [交易日期], [開盤價], [最高價], [最低價], [收盤價], [成交量] 
+                    FROM stock_table 
+                    WHERE Year = '{year}'
+                    ORDER BY [交易日期] DESC, [Yahoo 代號] ASC
+                """
+                year_data_df = pd.read_sql(data_query, conn)
+                
+                # 輸出為 CSV，指定 utf-8-sig 以完美支援 Excel 開啟中文
+                year_data_df.to_csv(output_file, index=False, encoding='utf-8-sig')
+                print(f"🎉 '{output_file}' 儲存成功！(共 {len(year_data_df)} 筆)")
+                del year_data_df
+                
         else:
              print("⚠️ 找不到任何資料。")
     except Exception as e:
-        print(f"❌ 寫入 Excel 時發生錯誤：{e}")
+        print(f"❌ 寫入 CSV 時發生錯誤：{e}")
 
     conn.close()
     if os.path.exists(temp_db):
