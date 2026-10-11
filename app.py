@@ -4,6 +4,13 @@ import numpy as np
 import time
 from datetime import datetime
 
+# 引入官方 150 檔股票名稱對照模組
+try:
+    from src.stock_list.official_stocks import get_official_stock_name
+except ImportError:
+    def get_official_stock_name(stock_id):
+        return f"指定標的_{stock_id}"
+
 # 假設您的專案結構有這些模組，若無請依實際情況調整匯入路徑
 try:
     from src.data_loader.finmind_loader import FinMindDataLoader
@@ -81,7 +88,7 @@ if reset_btn:
     st.sidebar.success("帳戶已重置為 10 億元初始資金！")
 
 # -------------------------------------------------------------------
-# 3. 安全的 API 資料獲取與快取處理 (防止 TypeError 崩潰)
+# 3. 安全的 API 資料獲取與快取處理
 # -------------------------------------------------------------------
 @st.cache_resource
 def get_loader():
@@ -93,14 +100,12 @@ loader = get_loader()
 def get_forecast_cached(stock_id):
     """安全呼叫 AI 預測模型，防止發生 TypeError 導致網頁崩潰"""
     try:
-        # 呼叫預測模型 (不傳遞無法序列化的 loader 至參數快取)
         res = ai_dynamic_forecast(stock_id, loader=loader)
         if not isinstance(res, dict):
             return {"stock_id": stock_id, "forecast_score": 0.5, "signal": "HOLD", "error": "回傳非字典格式"}
         return res
     except Exception as e:
         print(f"[系統日誌] 股票 {stock_id} 預測發生錯誤: {e}")
-        # 出錯時給予預設值，確保程式能繼續跑完剩下的股票
         return {"stock_id": stock_id, "forecast_score": 0.5, "signal": "HOLD", "error": str(e)}
 
 # -------------------------------------------------------------------
@@ -111,62 +116,50 @@ if run_ai_btn:
     forecast_results = []
     latest_prices = {}
     
-    # 建立進度條
     progress_bar = st.progress(0, text="正在載入 150 檔股票 AI 預測資料與即時價格...")
     
     for i, stock_id in enumerate(target_stocks):
-        # 1. 取得預測分數
         res = get_forecast_cached(stock_id)
         score = res.get("forecast_score", 0.5) if isinstance(res, dict) else 0.5
         res["forecast_score"] = score
+        
+        # 自動補上中文名稱對照欄位
+        res["stock_name"] = get_official_stock_name(stock_id)
         forecast_results.append(res)
         
-        # 2. 取得最新價格
         try:
             df_p = loader.get_stock_price(stock_id)
             if df_p is not None and not df_p.empty and "close" in df_p.columns:
                 latest_prices[stock_id] = float(df_p["close"].iloc[-1])
             else:
-                latest_prices[stock_id] = 100.0  # 預設價格
+                latest_prices[stock_id] = 100.0
         except Exception:
             latest_prices[stock_id] = 100.0
             
-        # 避免密集請求被 API 阻擋，微停頓
-        time.sleep(0.05) 
+        time.sleep(0.05)
+        progress_bar.progress((i + 1) / len(target_stocks), text=f"已處理 {get_official_stock_name(stock_id)} ({stock_id}) ({i+1}/{len(target_stocks)})")
         
-        # 更新進度條
-        progress_bar.progress((i + 1) / len(target_stocks), text=f"已處理 {stock_id} ({i+1}/{len(target_stocks)})")
-        
-    progress_bar.empty() # 隱藏進度條
+    progress_bar.empty()
 
-    # --- 依分數排序並篩選前 20~30 檔 ---
     sorted_stocks = sorted(forecast_results, key=lambda x: x["forecast_score"], reverse=True)
-    
-    # 先濾出有大於等於「買進門檻」的強勢股
     qualified_stocks = [s for s in sorted_stocks if s["forecast_score"] >= score_threshold]
-    
-    # 取最多 MAX_POSITIONS (30檔)
     selected_stocks = qualified_stocks[:MAX_POSITIONS]
     
     if len(selected_stocks) < MIN_POSITIONS:
         st.warning(f"⚠️ 符合買進門檻 ({score_threshold}) 的股票僅有 {len(selected_stocks)} 檔，未達競賽 {MIN_POSITIONS} 檔下限。系統將自動補齊至最低門檻。")
-        # 如果不夠 20 檔，強制補齊前 20 名以符合參賽規定
         selected_stocks = sorted_stocks[:MIN_POSITIONS]
 
-    # --- 執行下單與資產重新分配 ---
     current_stock_val = sum(
         st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 0)
         for s in selected_stocks
     )
     total_nav = st.session_state["cash"] + current_stock_val
     
-    target_stock_allocation_ratio = 0.90 # 預留 10% 現金
+    target_stock_allocation_ratio = 0.90
     num_selected = len(selected_stocks)
-    
-    # 建立這次要買的標的清單 ID
     selected_ids = [s["stock_id"] for s in selected_stocks]
     
-    # 1. 強制平倉邏輯 (若持股跌破門檻，或不在本次精選名單中，則賣出)
+    # 1. 停損平倉
     for s_id in list(st.session_state["portfolio"].keys()):
         current_holdings = st.session_state["portfolio"][s_id]
         shares_held = current_holdings["shares"]
@@ -180,14 +173,15 @@ if run_ai_btn:
             st.session_state["cash"] += net_revenue
             st.session_state["portfolio"][s_id] = {"shares": 0, "avg_cost": 0.0}
             st.session_state["trade_history"].append({
-                "時間": now_str, "股票代碼": s_id, "動作": "停損/平倉 (SELL)", 
-                "成交單價": price, "整股(股)": shares_held, 
+                "時間": now_str, "股票代碼": s_id, "股票名稱": get_official_stock_name(s_id),
+                "動作": "停損/平倉 (SELL)", "成交單價": price, "整股(股)": shares_held, 
                 "淨入帳金額": net_revenue, "備註": "未達 AI 門檻"
             })
     
-    # 2. 建倉/加碼邏輯
+    # 2. 建倉加碼
     for res in selected_stocks:
         s_id = res["stock_id"]
+        stock_name = get_official_stock_name(s_id)
         price = latest_prices.get(s_id, 100.0)
         score = res["forecast_score"]
         
@@ -216,8 +210,8 @@ if run_ai_btn:
                     st.session_state["portfolio"][s_id] = {"shares": new_shares, "avg_cost": new_avg_cost}
                     
                     st.session_state["trade_history"].append({
-                        "時間": now_str, "股票代碼": s_id, "動作": "買進 (BUY)", 
-                        "成交單價": price, "整股(股)": buy_shares, 
+                        "時間": now_str, "股票代碼": s_id, "股票名稱": stock_name,
+                        "動作": "買進 (BUY)", "成交單價": price, "整股(股)": buy_shares, 
                         "扣款總額": total_cost, "AI 評分": round(score, 4)
                     })
                     
@@ -232,7 +226,7 @@ inventory_data = []
 for s_id, hold in st.session_state["portfolio"].items():
     s_shares = hold["shares"]
     if s_shares > 0:
-        cur_p = latest_prices.get(s_id, 100.0) if 'latest_prices' in locals() else 0.0
+        cur_p = latest_prices.get(s_id, 100.0) if 'latest_prices' in locals() else 100.0
         mkt_val = s_shares * cur_p
         stock_market_value += mkt_val
         
@@ -241,6 +235,7 @@ for s_id, hold in st.session_state["portfolio"].items():
         
         inventory_data.append({
             "股票代碼": s_id,
+            "股票名稱": get_official_stock_name(s_id),
             "持股張數": int(s_shares // 1000),
             "平均成本": f"${hold['avg_cost']:.2f}",
             "當前收盤價": f"${cur_p:.2f}",
@@ -252,7 +247,7 @@ total_assets = st.session_state["cash"] + stock_market_value
 cash_ratio = (st.session_state["cash"] / total_assets) * 100 if total_assets > 0 else 0
 
 tsmc_shares = st.session_state["portfolio"].get("2330", {}).get("shares", 0)
-tsmc_val = tsmc_shares * (latest_prices.get("2330", 0.0) if 'latest_prices' in locals() else 0.0)
+tsmc_val = tsmc_shares * (latest_prices.get("2330", 100.0) if 'latest_prices' in locals() else 100.0)
 tsmc_ratio = (tsmc_val / total_assets) * 100 if total_assets > 0 else 0
 
 active_positions_count = len(inventory_data)
@@ -303,14 +298,10 @@ with tab_ai:
 
 with tab_inventory:
     if inventory_data:
-        # 顯示 DataFrame
         df_inventory = pd.DataFrame(inventory_data)
         st.dataframe(df_inventory, use_container_width=True)
         
-        # 轉換為 CSV 格式 (加上 utf-8-sig 防止 Excel 中文亂碼)
         csv_data = df_inventory.to_csv(index=False).encode('utf-8-sig')
-        
-        # 建立下載按鈕
         st.download_button(
             label="📥 下載持股部位 (CSV)",
             data=csv_data,
@@ -322,7 +313,6 @@ with tab_inventory:
 
 with tab_history:
     if st.session_state["trade_history"]:
-        # 顯示反轉排序，最新的在最上面
         st.dataframe(pd.DataFrame(st.session_state["trade_history"][::-1]), use_container_width=True)
     else:
         st.info("尚無交易紀錄。")
