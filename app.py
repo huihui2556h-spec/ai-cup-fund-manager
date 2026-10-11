@@ -111,6 +111,7 @@ def get_forecast_cached(stock_id):
 # -------------------------------------------------------------------
 # 4. 執行 AI 決策下單邏輯
 # -------------------------------------------------------------------
+# --- AI 動態選股與個股權重配置邏輯 ---
 if run_ai_btn:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     forecast_results = []
@@ -122,8 +123,6 @@ if run_ai_btn:
         res = get_forecast_cached(stock_id)
         score = res.get("forecast_score", 0.5) if isinstance(res, dict) else 0.5
         res["forecast_score"] = score
-        
-        # 自動補上中文名稱對照欄位
         res["stock_name"] = get_official_stock_name(stock_id)
         forecast_results.append(res)
         
@@ -136,30 +135,50 @@ if run_ai_btn:
         except Exception:
             latest_prices[stock_id] = 100.0
             
-        time.sleep(0.05)
-        progress_bar.progress((i + 1) / len(target_stocks), text=f"已處理 {get_official_stock_name(stock_id)} ({stock_id}) ({i+1}/{len(target_stocks)})")
+        time.sleep(0.02)
+        progress_bar.progress((i + 1) / len(target_stocks), text=f"已處理 {get_official_stock_name(stock_id)} ({stock_id})")
         
     progress_bar.empty()
 
+    # 1. 依分數排序並選出前 20 ~ 30 檔強勢股
     sorted_stocks = sorted(forecast_results, key=lambda x: x["forecast_score"], reverse=True)
-    qualified_stocks = [s for s in sorted_stocks if s["forecast_score"] >= score_threshold]
-    selected_stocks = qualified_stocks[:MAX_POSITIONS]
+    selected_stocks = sorted_stocks[:MAX_POSITIONS]
     
     if len(selected_stocks) < MIN_POSITIONS:
-        st.warning(f"⚠️ 符合買進門檻 ({score_threshold}) 的股票僅有 {len(selected_stocks)} 檔，未達競賽 {MIN_POSITIONS} 檔下限。系統將自動補齊至最低門檻。")
-        selected_stocks = sorted_stocks[:MIN_POSITIONS]
+        selected_stocks = sorted_stocks[:MIN_POSITIONS] # 確保至少 20 檔
 
+    # 計算當前總資產 NAV
     current_stock_val = sum(
-        st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 0)
+        st.session_state["portfolio"].get(s["stock_id"], {}).get("shares", 0) * latest_prices.get(s["stock_id"], 100.0)
         for s in selected_stocks
     )
     total_nav = st.session_state["cash"] + current_stock_val
     
-    target_stock_allocation_ratio = 0.90
-    num_selected = len(selected_stocks)
+    # 2. 【AI 動態權重分配核心演算法】
+    # 根據每檔股票的 AI 預測分數進行加權配置（Score Proportional Weighting）
+    raw_scores = [s["forecast_score"] for s in selected_stocks]
+    score_sum = sum(raw_scores) if sum(raw_scores) > 0 else 1.0
+    
+    target_allocation_pool = 0.90 # 總共拿 90% 資金投入股票，保留 10% 現金 (符合 <25% 現金限制)
+    
+    stock_target_weights = {}
+    for s in selected_stocks:
+        s_id = s["stock_id"]
+        # 基礎權重依分數比例分配
+        weight = (s["forecast_score"] / score_sum) * target_allocation_pool
+        
+        # 嚴格套用競賽風控上限：台積電(2330)上限 25%，其餘個股上限 10%
+        if s_id == "2330":
+            weight = min(weight, TSMC_WEIGHT_LIMIT)
+        else:
+            weight = min(weight, OTHER_WEIGHT_LIMIT)
+            
+        stock_target_weights[s_id] = weight
+
+    # 3. 執行換股與下單交易
     selected_ids = [s["stock_id"] for s in selected_stocks]
     
-    # 1. 停損平倉
+    # 平倉未入選的股票
     for s_id in list(st.session_state["portfolio"].keys()):
         current_holdings = st.session_state["portfolio"][s_id]
         shares_held = current_holdings["shares"]
@@ -174,48 +193,69 @@ if run_ai_btn:
             st.session_state["portfolio"][s_id] = {"shares": 0, "avg_cost": 0.0}
             st.session_state["trade_history"].append({
                 "時間": now_str, "股票代碼": s_id, "股票名稱": get_official_stock_name(s_id),
-                "動作": "停損/平倉 (SELL)", "成交單價": price, "整股(股)": shares_held, 
-                "淨入帳金額": net_revenue, "備註": "未達 AI 門檻"
+                "動作": "平倉 (SELL)", "成交單價": price, "整股(股)": shares_held, 
+                "淨入帳金額": net_revenue, "備註": "未達 AI 選股名單"
             })
     
-    # 2. 建倉加碼
-    for res in selected_stocks:
-        s_id = res["stock_id"]
+    # 依照 AI 動態權重建倉/調整部位
+    for s in selected_stocks:
+        s_id = s["stock_id"]
         stock_name = get_official_stock_name(s_id)
         price = latest_prices.get(s_id, 100.0)
-        score = res["forecast_score"]
+        score = s["forecast_score"]
         
-        max_weight = TSMC_WEIGHT_LIMIT if s_id == "2330" else OTHER_WEIGHT_LIMIT
-        max_allowed_val = total_nav * max_weight
+        target_weight = stock_target_weights.get(s_id, 0.03)
+        target_val = total_nav * target_weight
         
         current_holdings = st.session_state["portfolio"].get(s_id, {"shares": 0, "avg_cost": 0.0})
         shares_held = current_holdings["shares"]
+        current_val = shares_held * price
         
-        target_val = min(max_allowed_val, (total_nav * target_stock_allocation_ratio) / num_selected)
+        val_diff = target_val - current_val
         
-        if target_val > (shares_held * price):
-            buy_val_needed = target_val - (shares_held * price)
-            buy_lots = int(buy_val_needed // (price * 1000))
-            buy_shares = buy_lots * 1000
-            
-            if buy_shares > 0:
-                gross_cost = buy_shares * price
-                fee = gross_cost * FEE_RATE
-                total_cost = gross_cost + fee
-                
-                if st.session_state["cash"] >= total_cost:
-                    st.session_state["cash"] -= total_cost
-                    new_shares = shares_held + buy_shares
-                    new_avg_cost = ((shares_held * current_holdings["avg_cost"]) + total_cost) / new_shares
-                    st.session_state["portfolio"][s_id] = {"shares": new_shares, "avg_cost": new_avg_cost}
+        if abs(val_diff) > (price * 1000): # 超過一張才進行調整
+            if val_diff > 0:
+                # 買進/加碼
+                buy_lots = int(val_diff // (price * 1000))
+                buy_shares = buy_lots * 1000
+                if buy_shares > 0:
+                    gross_cost = buy_shares * price
+                    fee = gross_cost * FEE_RATE
+                    total_cost = gross_cost + fee
+                    
+                    if st.session_state["cash"] >= total_cost:
+                        st.session_state["cash"] -= total_cost
+                        new_shares = shares_held + buy_shares
+                        new_avg_cost = ((shares_held * current_holdings["avg_cost"]) + total_cost) / new_shares
+                        st.session_state["portfolio"][s_id] = {"shares": new_shares, "avg_cost": new_avg_cost}
+                        
+                        st.session_state["trade_history"].append({
+                            "時間": now_str, "股票代碼": s_id, "股票名稱": stock_name,
+                            "動作": "買進 (BUY)", "成交單價": price, "整股(股)": buy_shares, 
+                            "扣款總額": total_cost, "AI 評分": round(score, 4), "配置權重": f"{target_weight*100:.2f}%"
+                        })
+            else:
+                # 減碼/賣出
+                sell_val = abs(val_diff)
+                sell_lots = int(sell_val // (price * 1000))
+                sell_shares = sell_lots * 1000
+                if sell_shares > 0 and sell_shares <= shares_held:
+                    gross_revenue = sell_shares * price
+                    fee = gross_revenue * FEE_RATE
+                    tax = gross_revenue * TAX_RATE
+                    net_revenue = gross_revenue - fee - tax
+                    
+                    st.session_state["cash"] += net_revenue
+                    new_shares = shares_held - sell_shares
+                    st.session_state["portfolio"][s_id] = {"shares": new_shares, "avg_cost": current_holdings["avg_cost"]}
                     
                     st.session_state["trade_history"].append({
                         "時間": now_str, "股票代碼": s_id, "股票名稱": stock_name,
-                        "動作": "買進 (BUY)", "成交單價": price, "整股(股)": buy_shares, 
-                        "扣款總額": total_cost, "AI 評分": round(score, 4)
+                        "動作": "減碼 (TRIM)", "成交單價": price, "整股(股)": sell_shares, 
+                        "淨入帳金額": net_revenue, "備註": "AI 動態權重調降"
                     })
                     
-    st.success("🤖 AI 交易決策執行完成！已根據 AI 評分門檻完成資產重分配。")
+    st.success("🤖 AI 智慧選股與動態權重配置完成！已自動計算各標的最適資金佔比並執行下單。")
 
 # -------------------------------------------------------------------
 # 5. 資產總覽與規則檢核面板
