@@ -1,0 +1,36 @@
+name: 執行歷史資料爬蟲並存檔
+
+on:
+  workflow_dispatch: # 允許您在 GitHub 網頁上手動點擊執行按鈕
+
+permissions:
+  contents: write # 允許機器人將抓下來的 Excel 檔案寫回你的 Repository
+
+jobs:
+  fetch-and-save:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (下載最新程式碼)
+        uses: actions/checkout@v4
+
+      - name: Set up Python (安裝 Python)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies (安裝套件)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas yfinance openpyxl
+
+      - name: Run Fetcher Script (執行爬蟲程式)
+        run: python src/fetchers/yfinance_fetcher.py
+
+      - name: Commit and Push changes (將 Excel 檔案傳回 GitHub)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/fetchers/historical_data/
+          # 如果有新檔案就 commit，沒有就不會出錯
+          git commit -m "🤖 自動抓取並更新歷史股票資料" || echo "無新資料需要更新"
+          git push
