@@ -64,9 +64,11 @@ def fetch_and_split_max_history_interactive():
         os.remove(temp_db)
     conn = sqlite3.connect(temp_db)
 
+    # 🎯 這裡修正了：把 Name 轉換為 公司名稱
     columns_mapping = {
         'Ticker': 'Yahoo 代號', 'Date': '交易日期',
-        'Open': '開盤價', 'High': '最高價', 'Low': '最低價', 'Close': '收盤價', 'Volume': '成交量'
+        'Open': '開盤價', 'High': '最高價', 'Low': '最低價', 'Close': '收盤價', 'Volume': '成交量',
+        'Name': '公司名稱' 
     }
     keep_cols = ['Yahoo 代號', '公司名稱', '交易日期', '開盤價', '最高價', '最低價', '收盤價', '成交量']
     period = "max" 
@@ -123,7 +125,6 @@ def fetch_and_split_max_history_interactive():
             for year in unique_years:
                 output_file = os.path.join(output_dir, f"股市資料_{year}.csv")
                 
-                # 直接撈取該年度所有資料
                 data_query = f"""
                     SELECT [Yahoo 代號], [公司名稱], [交易日期], [開盤價], [最高價], [最低價], [收盤價], [成交量] 
                     FROM stock_table 
@@ -132,7 +133,6 @@ def fetch_and_split_max_history_interactive():
                 """
                 year_data_df = pd.read_sql(data_query, conn)
                 
-                # 輸出為 CSV，指定 utf-8-sig 以完美支援 Excel 開啟中文
                 year_data_df.to_csv(output_file, index=False, encoding='utf-8-sig')
                 print(f"🎉 '{output_file}' 儲存成功！(共 {len(year_data_df)} 筆)")
                 del year_data_df
