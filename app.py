@@ -263,21 +263,31 @@ if run_ai_btn:
 stock_market_value = 0.0
 inventory_data = []
 
-for s_id, hold in st.session_state["portfolio"].items():
-    s_shares = hold["shares"]
+# 安全讀取 portfolio 字典
+portfolio_dict = st.session_state.get("portfolio", {})
+
+for s_id, hold in portfolio_dict.items():
+    # 確保 hold 是字典且有 shares 欄位
+    if isinstance(hold, dict):
+        s_shares = hold.get("shares", 0)
+        avg_cost = hold.get("avg_cost", 0.0)
+    else:
+        s_shares = hold
+        avg_cost = 0.0
+
     if s_shares > 0:
         cur_p = latest_prices.get(s_id, 100.0) if 'latest_prices' in locals() else 100.0
         mkt_val = s_shares * cur_p
         stock_market_value += mkt_val
         
-        pnl = (cur_p - hold["avg_cost"]) * s_shares
-        pnl_pct = ((cur_p - hold["avg_cost"]) / hold["avg_cost"]) * 100 if hold["avg_cost"] > 0 else 0
+        pnl = (cur_p - avg_cost) * s_shares
+        pnl_pct = ((cur_p - avg_cost) / avg_cost) * 100 if avg_cost > 0 else 0
         
         inventory_data.append({
             "股票代碼": s_id,
-            "股票名稱": get_official_stock_name(s_id),
+            "股票名稱": get_official_stock_name(s_id) if 'get_official_stock_name' in globals() else s_id,
             "持股張數": int(s_shares // 1000),
-            "平均成本": f"${hold['avg_cost']:.2f}",
+            "平均成本": f"${avg_cost:.2f}",
             "當前收盤價": f"${cur_p:.2f}",
             "持股市值": f"${mkt_val:,.0f}",
             "未實現損益": f"${pnl:+,.0f} ({pnl_pct:+.2f}%)"
@@ -286,7 +296,7 @@ for s_id, hold in st.session_state["portfolio"].items():
 total_assets = st.session_state["cash"] + stock_market_value
 cash_ratio = (st.session_state["cash"] / total_assets) * 100 if total_assets > 0 else 0
 
-tsmc_shares = st.session_state["portfolio"].get("2330", {}).get("shares", 0)
+tsmc_shares = portfolio_dict.get("2330", {}).get("shares", 0) if isinstance(portfolio_dict.get("2330"), dict) else 0
 tsmc_val = tsmc_shares * (latest_prices.get("2330", 100.0) if 'latest_prices' in locals() else 100.0)
 tsmc_ratio = (tsmc_val / total_assets) * 100 if total_assets > 0 else 0
 
