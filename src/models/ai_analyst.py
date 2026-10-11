@@ -1,12 +1,13 @@
 import os
+import json
 from google import genai
 from google.genai import types
 
-def get_ai_market_and_stock_analysis(forecast_results, nav):
+def fetch_dynamic_ai_analysis(forecast_results, nav):
     """
-    呼叫 Gemini AI 根據當前籌碼與數據生成專業的市場觀點與個股推論
+    動態呼叫 Gemini API 根據當前股票預測與籌碼數據生成專業基金經理人觀點
     """
-    # 整理給 AI 的數據摘要
+    # 整理傳給 AI 的數據摘要
     summary_data = []
     for res in forecast_results:
         summary_data.append({
@@ -17,18 +18,23 @@ def get_ai_market_and_stock_analysis(forecast_results, nav):
         })
     
     prompt = f"""
-    你是一位頂尖的投信基金經理人與量化交易專家。目前管理 10 億元台股 ETF 虛擬基金。
-    請根據以下各檔股票的 AI 預測分數、籌碼 Z-Score 與動量指標結果：
+    你是一位頂尖的投信基金經理人，目前管理 10 億元台股 ETF 虛擬基金。
+    請根據以下各檔股票的 AI 預測分數、籌碼 Z-Score 與動量指標：
     {summary_data}
     
-    請以專業、合規的口吻提供以下內容（請用 JSON 格式回傳，包含兩個欄位）：
-    1. "market_logic": 一段專業的整體市場觀點邏輯（對應 D-Plan 的 market_view）。
-    2. "stock_inferences": 一個字典，鍵為 stock_id，值為該檔股票的專業推論邏輯（對應 D-Plan 的 inferences）。
+    請以專業、合規的口吻進行動態分析，並嚴格以 JSON 格式回傳以下兩個欄位：
+    1. "market_logic": 一段專業的整體市場觀點邏輯（對應 D-Plan 的 market_view 描述，分析大盤與資金動向）。
+    2. "stock_inferences": 一個字典（dict），鍵為股票代碼（stock_id），值為該檔股票的專業推論邏輯文字（對應 D-Plan 的 inferences）。
     """
 
     try:
-        # 初始化 Gemini Client (需在環境變數設定 GEMINI_API_KEY)
-        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+        # 動態抓取環境變數中的 GEMINI_API_KEY
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("⚠️ 警告：未偵測到 GEMINI_API_KEY 環境變數，將改用動態量化生成邏輯。")
+            return None
+
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
@@ -36,9 +42,7 @@ def get_ai_market_and_stock_analysis(forecast_results, nav):
                 response_mime_type="application/json",
             ),
         )
-        import json
         return json.loads(response.text)
     except Exception as e:
-        # 若 API Key 尚未設定或呼叫失敗時的備用邏輯
-        print(f"AI API 呼叫提示: {e}，將使用預設量化邏輯生成。")
+        print(f"❌ AI API 呼叫失敗: {e}，將自動切換為動態備用邏輯。")
         return None
