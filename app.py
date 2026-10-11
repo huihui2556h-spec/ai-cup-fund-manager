@@ -352,4 +352,45 @@ with tab_ai:
     if 'forecast_results' in locals() and forecast_results:
         df_ai = pd.DataFrame(forecast_results)
         
-        # 1. 整理主分數：四捨五入到小
+        # 1. 整理主分數：四捨五入到小數點後 3 位
+        if "forecast_score" in df_ai.columns:
+            df_ai["forecast_score"] = df_ai["forecast_score"].round(3)
+            
+        # 2. 處理異常的 sub_scores：把 JSON 字典展開成獨立欄位
+        if "sub_scores" in df_ai.columns:
+            # 確保內容是字典，並轉換為 DataFrame
+            sub_dicts = df_ai["sub_scores"].apply(lambda x: x if isinstance(x, dict) else {})
+            sub_df = pd.DataFrame(sub_dicts.tolist())
+            
+            # 解決 0.799999 的浮點數問題，四捨五入到小數點後 2 位
+            sub_df = sub_df.round(2)
+            
+            # 幫展開的欄位加上前綴，例如「子指標_twse_tpex」
+            sub_df.columns = [f"子指標_{col}" for col in sub_df.columns]
+            
+            # 刪除原本醜醜的 JSON 欄位，把新欄位接上去
+            df_ai = pd.concat([df_ai.drop(columns=["sub_scores"]), sub_df], axis=1)
+
+        st.dataframe(df_ai, use_container_width=True)
+    else:
+        st.info("請點擊左側「🚀 執行 AI 多維度選股決策」以載入最新預測。")
+
+with tab_inventory:
+    if inventory_data:
+        df_inventory = pd.DataFrame(inventory_data)
+        st.dataframe(df_inventory, use_container_width=True)
+        csv_data = df_inventory.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 下載持股部位 (CSV)",
+            data=csv_data,
+            file_name=f"portfolio_holdings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("尚無持股部位。請點擊左側『執行 AI 決策下單』。")
+
+with tab_history:
+    if st.session_state["trade_history"]:
+        st.dataframe(pd.DataFrame(st.session_state["trade_history"][::-1]), use_container_width=True)
+    else:
+        st.info("尚無交易紀錄。")
