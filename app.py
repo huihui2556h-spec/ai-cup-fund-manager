@@ -344,32 +344,12 @@ with c3:
 st.markdown("---")
 
 # -------------------------------------------------------------------
-# 6. 頁籤明細展示與 CSV 下載
+# 6. 頁籤明細展示與 CSV 下載 (加入 JSON 展開與四捨五入修復)
 # -------------------------------------------------------------------
 tab_ai, tab_inventory, tab_history = st.tabs(["🤖 AI 籌碼預測與評分", "📦 當前持股部位", "📜 評審審查-交易歷史日誌"])
 
 with tab_ai:
     if 'forecast_results' in locals() and forecast_results:
-        st.dataframe(pd.DataFrame(forecast_results), use_container_width=True)
-    else:
-        st.info("請點擊左側「🚀 執行 AI 多維度選股決策」以載入最新預測。")
-
-with tab_inventory:
-    if inventory_data:
-        df_inventory = pd.DataFrame(inventory_data)
-        st.dataframe(df_inventory, use_container_width=True)
-        csv_data = df_inventory.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📥 下載持股部位 (CSV)",
-            data=csv_data,
-            file_name=f"portfolio_holdings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("尚無持股部位。請點擊左側『執行 AI 決策下單』。")
-
-with tab_history:
-    if st.session_state["trade_history"]:
-        st.dataframe(pd.DataFrame(st.session_state["trade_history"][::-1]), use_container_width=True)
-    else:
-        st.info("尚無交易紀錄。")
+        df_ai = pd.DataFrame(forecast_results)
+        
+        # 1. 整理主分數：四捨五入到小
