@@ -96,7 +96,8 @@ def get_loader():
 
 loader = get_loader()
 
-@st.cache_resource(show_spinner=False)
+# 🛑 關鍵修復：把 cache_resource 改成 cache_data(ttl=3600)，每小時自動清除舊分數快取！
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_forecast_cached(stock_id):
     try:
         res = ai_dynamic_forecast(stock_id, loader=loader)
@@ -106,7 +107,7 @@ def get_forecast_cached(stock_id):
     except Exception as e:
         return {"stock_id": stock_id, "forecast_score": 0.5, "signal": "HOLD", "error": str(e)}
 
-# 🎯 新增：自動讀取 historical_data 抓最新收盤價
+# 自動讀取 historical_data 抓最新收盤價
 @st.cache_data(ttl=3600)
 def load_latest_prices_from_csv():
     prices_dict = {}
@@ -160,7 +161,7 @@ if run_ai_btn:
         res["stock_name"] = get_official_stock_name(stock_id)
         forecast_results.append(res)
         
-        # 🎯 改良：直接優先使用剛剛從 CSV 讀取到的真實價格，若找不到才預設 100
+        # 直接優先使用剛剛從 CSV 讀取到的真實價格，若找不到才預設 100
         latest_prices[stock_id] = local_prices.get(stock_id, 100.0)
             
         progress_bar.progress((i + 1) / len(target_stocks), text=f"正在分析: {get_official_stock_name(stock_id)} ({stock_id})")
@@ -295,7 +296,7 @@ for s_id, hold in portfolio_dict.items():
         avg_cost = 0.0
         
     if s_shares > 0:
-        # 🎯 改良：隨時從 CSV 讀取真實最新價
+        # 隨時從 CSV 讀取真實最新價
         cur_p = local_prices.get(s_id, 100.0) 
         mkt_val = s_shares * cur_p
         stock_market_value += mkt_val
@@ -313,7 +314,7 @@ total_assets = st.session_state["cash"] + stock_market_value
 cash_ratio = (st.session_state["cash"] / total_assets) * 100 if total_assets > 0 else 0
 
 tsmc_shares = portfolio_dict.get("2330", {}).get("shares", 0) if isinstance(portfolio_dict.get("2330"), dict) else 0
-# 🎯 改良：台積電權重也是用真實報價算
+# 台積電權重也是用真實報價算
 tsmc_val = tsmc_shares * local_prices.get("2330", 100.0)
 tsmc_ratio = (tsmc_val / total_assets) * 100 if total_assets > 0 else 0
 
