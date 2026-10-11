@@ -5,9 +5,8 @@ from google.genai import types
 
 def fetch_dynamic_ai_analysis(forecast_results, nav):
     """
-    動態呼叫 Gemini API 根據當前股票預測與籌碼數據生成專業基金經理人觀點
+    直接在程式碼中帶入金鑰，呼叫 Gemini API 生成專業市場與個股推論
     """
-    # 整理傳給 AI 的數據摘要
     summary_data = []
     for res in forecast_results:
         summary_data.append({
@@ -23,18 +22,15 @@ def fetch_dynamic_ai_analysis(forecast_results, nav):
     {summary_data}
     
     請以專業、合規的口吻進行動態分析，並嚴格以 JSON 格式回傳以下兩個欄位：
-    1. "market_logic": 一段專業的整體市場觀點邏輯（對應 D-Plan 的 market_view 描述，分析大盤與資金動向）。
+    1. "market_logic": 一段專業的整體市場觀點邏輯（對應 D-Plan 的 market_view 描述）。
     2. "stock_inferences": 一個字典（dict），鍵為股票代碼（stock_id），值為該檔股票的專業推論邏輯文字（對應 D-Plan 的 inferences）。
     """
 
     try:
-        # 動態抓取環境變數中的 GEMINI_API_KEY
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            print("⚠️ 警告：未偵測到 GEMINI_API_KEY 環境變數，將改用動態量化生成邏輯。")
-            return None
-
-        client = genai.Client(api_key=api_key)
+        # 直接把你的 API 金鑰寫在這裡
+        my_api_key = "AQ.Ab8RN6LcglIEwuGlsurG_hJ7wTzIp0f-3IUNHrSXUE0gCk1wJA"
+        
+        client = genai.Client(api_key=my_api_key)
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
