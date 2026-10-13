@@ -392,3 +392,72 @@ with tab_history:
         st.dataframe(pd.DataFrame(st.session_state["trade_history"][::-1]), use_container_width=True)
     else:
         st.info("尚無交易紀錄。")
+
+# 引入 D-Plan 生成器
+try:
+    from src.models.dplan_generator import DPlanGenerator
+    dplan_gen = DPlanGenerator(team_id="TEAM_042") # 可依你的參賽隊伍 ID 修改
+except ImportError:
+    dplan_gen = None
+
+# 在網頁側邊欄或頁籤中加入 D-Plan 導出按鈕
+st.sidebar.markdown("---")
+st.sidebar.subheader("📄 玉山賽事 D-Plan 導出")
+
+if dplan_gen and 'forecast_results_state' in st.session_state and st.session_state["forecast_results_state"]:
+    today_date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    # 準備產生 D-Plan JSON
+    active_portfolio = st.session_state.get("portfolio", {})
+    saved_forecasts = st.session_state.get("forecast_results_state", [])
+    saved_prices = st.session_state.get("latest_prices_state", {})
+    
+    market_payload = {
+        "taiex": 23412.5,
+        "taiex_chg_pct": -0.35,
+        "sox_chg_pct": -0.80,
+        "txf_night": 23290,
+        "prices": saved_prices
+    }
+    
+    # 計算當前 nav_tradable
+    curr_stock_val = sum(
+        active_portfolio.get(s_id, {}).get("shares", 0) * saved_prices.get(s_id, 100.0)
+        for s_id in active_portfolio
+    )
+    current_nav = st.session_state["cash"] + curr_stock_val
+    
+    # 選出前 25 檔強勢股與目標權重
+    sorted_s = sorted(saved_forecasts, key=lambda x: x["forecast_score"], reverse=True)
+    top_stocks = sorted_s[:25]
+    raw_scores = [s["forecast_score"] for s in top_stocks]
+    s_sum = sum(raw_scores) if sum(raw_scores) > 0 else 1.0
+    
+    target_weights_map = {}
+    for s in top_stocks:
+        w = (s["forecast_score"] / s_sum) * 0.90
+        target_weights_map[s["stock_id"]] = min(w, 0.25 if s["stock_id"] == "2330" else 0.10)
+
+    # 生成 D-Plan 字典
+    dplan_json_dict = dplan_gen.generate_dplan(
+        trade_date=today_date_str,
+        market_data=market_payload,
+        portfolio=active_portfolio,
+        nav_tradable=current_nav,
+        selected_stocks=top_stocks,
+        target_weights=target_weights_map,
+        previous_holdings=active_portfolio
+    )
+    
+    json_string = json.dumps(dplan_json_dict, ensure_ascii=False, indent=4)
+    filename = f"D-Plan_TEAM_042_{today_date_str}.json"
+    
+    st.sidebar.download_button(
+        label="📥 下載今日 D-Plan (v4.3 JSON)",
+        data=json_string,
+        file_name=filename,
+        mime="application/json",
+        type="primary"
+    )
+else:
+    st.sidebar.info("請先點擊「🚀 執行 AI 多維度選股決策」，即可解鎖 D-Plan 匯出功能。")
