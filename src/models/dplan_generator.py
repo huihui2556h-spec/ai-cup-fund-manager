@@ -1,4 +1,5 @@
 import json
+import numpy as np
 from datetime import datetime
 
 class DPlanGenerator:
@@ -127,7 +128,6 @@ class DPlanGenerator:
             inf_idx += 1
             dec_idx += 1
 
-            # 推論
             inferences.append({
                 "inf_id": inf_id,
                 "premise_refs": ["O1", "O4"],
@@ -137,7 +137,6 @@ class DPlanGenerator:
                 "confidence": round(float(score), 2)
             })
 
-            # 判斷是 BUY 還是 ADD / TRIM
             prev_shares = previous_holdings.get(s_id, {}).get("shares", 0)
             action = "BUY" if prev_shares == 0 else "ADD"
 
@@ -150,7 +149,6 @@ class DPlanGenerator:
                 "risk_check": f"權重 {target_w*100:.2f}% 符合合規上限"
             })
 
-        # 檢查未入選股票（若昨日有持股但今日未入選，則 SELL_ALL 或 TRIM）
         for prev_id, prev_info in previous_holdings.items():
             prev_shares = prev_info.get("shares", 0)
             if prev_shares > 0 and prev_id not in [s["stock_id"] for s in selected_stocks]:
@@ -166,7 +164,7 @@ class DPlanGenerator:
                     "conclusion": f"清空 {prev_id} 部位",
                     "counter_evidence": None,
                     "confidence": 0.8
-                },)
+                })
                 decisions.append({
                     "decision_id": dec_id,
                     "ticker": prev_id,
@@ -176,13 +174,12 @@ class DPlanGenerator:
                     "risk_check": "未達選股標準，出清部位以釋放現金"
                 })
 
-        # 5. 官方演算法推導 Orders (加上防禦性檢查，避免分母為 0 或型態錯誤)
+        # 5. 官方演算法推導 Orders
         for d in decisions:
             s_id = d["ticker"]
             target_w = d["target_weight"]
             action = d["action"]
 
-            # 確保取得有效收盤價，避免除以零
             close_p = market_data.get("prices", {}).get(s_id, 100.0)
             if not close_p or close_p <= 0:
                 close_p = 100.0
