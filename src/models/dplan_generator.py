@@ -176,21 +176,24 @@ class DPlanGenerator:
                     "risk_check": "未達選股標準，出清部位以釋放現金"
                 })
 
-        # 5. 官方演算法推導 Orders
-        # 假設市場價格字典
+        # 5. 官方演算法推導 Orders (加上防禦性檢查，避免分母為 0 或型態錯誤)
         for d in decisions:
             s_id = d["ticker"]
             target_w = d["target_weight"]
             action = d["action"]
 
-            # 抓取前日收盤價（這裡從傳入資料或預設估算）
+            # 確保取得有效收盤價，避免除以零
             close_p = market_data.get("prices", {}).get(s_id, 100.0)
+            if not close_p or close_p <= 0:
+                close_p = 100.0
+
             prev_shares = previous_holdings.get(s_id, {}).get("shares", 0)
 
             if action == "SELL_ALL":
                 target_shares = 0
             else:
-                target_shares = int(np.floor((target_w * nav_tradable) / close_p / 1000.0) * 1000)
+                raw_target = (target_w * nav_tradable) / close_p
+                target_shares = int(np.floor(raw_target / 1000.0) * 1000)
 
             shares_diff = target_shares - prev_shares
 
