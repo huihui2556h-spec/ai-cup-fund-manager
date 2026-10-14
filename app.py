@@ -380,13 +380,22 @@ st.markdown("---")
 # 6. 頁籤明細展示與 CSV 下載
 # -------------------------------------------------------------------
 tab_ai, tab_inventory, tab_history = st.tabs(["🤖 AI 籌碼預測與評分", "📦 當前持股部位", "📜 評審審查-交易歷史日誌"])
-
 with tab_ai:
     saved_forecasts = st.session_state.get("forecast_results_state", [])
     if saved_forecasts:
         df_ai = pd.DataFrame(saved_forecasts)
+        
         if "forecast_score" in df_ai.columns:
             df_ai["forecast_score"] = df_ai["forecast_score"].round(3)
+            
+        # 自動將 sub_scores 字典展開成獨立欄位，避免顯示成 JSON 程式碼
+        if "sub_scores" in df_ai.columns:
+            sub_dicts = df_ai["sub_scores"].apply(lambda x: x if isinstance(x, dict) else {})
+            sub_df = pd.DataFrame(sub_dicts.tolist())
+            sub_df = sub_df.round(2)
+            sub_df.columns = [f"子指標_{col}" for col in sub_df.columns]
+            df_ai = pd.concat([df_ai.drop(columns=["sub_scores"]), sub_df], axis=1)
+
         st.dataframe(df_ai, use_container_width=True)
     else:
         st.info("請點擊左側「🚀 執行 AI 多維度選股決策」以載入最新預測。")
