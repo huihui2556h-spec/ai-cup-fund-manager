@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 import os
 import glob
+import json
 
 # ==========================================
 # 0. 引入官方 150 檔股票名稱對照模組與動態清單
