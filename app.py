@@ -1,9 +1,21 @@
+import os
+import sys
+
+# -------------------------------------------------------------------
+# 🔧 自動將專案根目錄加入 Python 模組搜尋路徑 (解決 Import 找不到 src 問題)
+# -------------------------------------------------------------------
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# 載入 .env 環境變數 (確保 GEMINI_API_KEY 被讀取)
+from dotenv import load_dotenv
+load_dotenv()
 import streamlit as st
 import pandas as pd
 import numpy as np
 import time
 from datetime import datetime
-import os
 import glob
 import json
 
