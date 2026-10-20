@@ -1,36 +1,25 @@
 import os
 import json
-import google.genai as genai
+from google import genai
 
-def get_ai_portfolio_decisions(target_stocks_data: list, market_context: dict) -> dict:
-    """
-    透過 Gemini 官方 SDK 讓 AI 針對 150 檔標的與真實市場數據進行深度分析，
-    自主挑選 20-30 檔股票並給出配置建議與推理邏輯。
-    """
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+def get_ai_portfolio_decisions(target_stocks_data, market_context):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    client = genai.Client(api_key=api_key)
     
-    # 若無 API Key，提供基於真實籌碼與基本面的智慧排序防禦機制
     if not api_key:
-        print("[系統提示] 未偵測到 GEMINI_API_KEY，啟用籌碼與基本面智慧排序 fallback。")
-        sorted_fallback = sorted(target_stocks_data, key=lambda x: x.get("net_buy", 0), reverse=True)
-        top_25 = sorted_fallback[:25]
-        decisions = []
-        for s in top_25:
-            decisions.append({
-                "ticker": s["stock_id"],
-                "action": "BUY",
-                "target_weight": round(0.90 / 25, 4),
-                "reason": f"法人買超金額 {s.get('net_buy', 0):,.0f}，基本面與籌碼面優異"
-            })
-        return {"market_regime": "neutral", "market_logic": "AI 離線智慧籌碼篩選", "decisions": decisions}
+        print("[系統提示] 未偵測到 GEMINI_API_KEY，啟用智慧籌碼排序。")
+        return _fallback_decisions(target_stocks_data)
 
     try:
+        # 如果是 AQ. 開頭的 GCP 憑證，直接透過環境變數傳遞，或透過 client 初始化
+        os.environ["GEMINI_API_KEY"] = api_key
+        
+        # 初始化 Gemini Client
         client = genai.Client(api_key=api_key)
         
         prompt = f"""
         你是一位專業的 AI 基金經理人，正在參與 2026 玉山 AI 挑戰賽。
-        請根據以下的市場背景與候選股票的真實數據（包含法人籌碼、月營收成長、股價動能等），
-        挑選出 20 到 30 檔最佳投資標的，並分配目標權重。
+        請根據以下的市場背景與候選股票的真實數據，挑選出 20 到 30 檔最佳投資標的，並分配目標權重。
         
         【競賽規則限制】
         1. 持股總檔數必須嚴格保持在 20 ~ 30 檔之間。
@@ -44,36 +33,51 @@ def get_ai_portfolio_decisions(target_stocks_data: list, market_context: dict) -
         【候選股票真實數據摘要】
         {json.dumps(target_stocks_data[:60], ensure_ascii=False)}
         
-        請以純 JSON 格式回傳你的決策結果，不要包含額外文字或 markdown 標籤外框，格式如下：
+        請以純 JSON 格式回傳你的決策結果，不要包含任何 markdown 標籤（如 ```json），格式如下：
         {{
-            "market_regime": "risk_on 或 neutral 或 risk_off",
-            "market_logic": "整體市場判斷邏輯（20字以上）",
+            "market_regime": "neutral",
+            "market_logic": "市場中性震盪，透過AI多維度籌碼與基本面篩選強勢標的",
             "decisions": [
-                {{"ticker": "股票代碼4碼", "action": "BUY", "target_weight": 0.04, "reason": "AI 深入分析選股理由"}}
+                {{"ticker": "股票代碼4碼", "action": "BUY", "target_weight": 0.04, "reason": "AI 深度分析選股理由"}}
             ]
         }}
         """
 
+        # 這裡改用 gemini-2.5-flash 或 gemini-2.5-pro 確保穩定回應
         response = client.models.generate_content(
-            model='gemini-2.5-pro',
+            model='gemini-2.5-flash',
             contents=prompt,
         )
         
         text_res = response.text.strip()
         if text_res.startswith("```json"):
             text_res = text_res[7:]
+        if text_res.startswith("```"):
+            text_res = text_res[3:]
         if text_res.endswith("```"):
             text_res = text_res[:-3]
             
         result_json = json.loads(text_res.strip())
+        print("✅ 成功透過 Gemini AI 取得自主決策！")
         return result_json
 
     except Exception as e:
         print(f"[AI 大腦錯誤] 呼叫 Gemini 失敗: {e}")
-        sorted_fallback = sorted(target_stocks_data, key=lambda x: x.get("net_buy", 0), reverse=True)
-        top_25 = sorted_fallback[:25]
-        return {
-            "market_regime": "neutral",
-            "market_logic": f"AI 呼叫例外 ({e})，啟動備用排序。",
-            "decisions": [{"ticker": s["stock_id"], "action": "BUY", "target_weight": round(0.90/25, 4), "reason": "備用籌碼篩選"} for s in top_25]
-        }
+        return _fallback_decisions(target_stocks_data)
+
+def _fallback_decisions(target_stocks_data):
+    sorted_fallback = sorted(target_stocks_data, key=lambda x: x.get("net_buy", 0), reverse=True)
+    top_25 = sorted_fallback[:25]
+    decisions = []
+    for s in top_25:
+        decisions.append({
+            "ticker": s["stock_id"],
+            "action": "BUY",
+            "target_weight": round(0.90 / 25, 4),
+            "reason": f"法人買超金額 {s.get('net_buy', 0):,.0f}，籌碼面強勢"
+        })
+    return {
+        "market_regime": "neutral",
+        "market_logic": "AI 離線智慧籌碼篩選（API 驗證降級保護）",
+        "decisions": decisions
+    }
