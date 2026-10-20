@@ -10,3 +10,4 @@ requests
 aiohttp
 jsonschema
 google-genai
+python-dotenv
